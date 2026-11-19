@@ -32,17 +32,14 @@ import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AudioFile
-import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.FolderOpen
-import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -83,7 +80,6 @@ import com.example.transfer.FileCategory
 import com.example.transfer.FileSaver
 import com.example.transfer.LocalNetworkUtils
 import com.example.transfer.NearbyPeer
-import com.example.transfer.PeerTransport
 import com.example.transfer.QrPairingPayload
 import com.example.transfer.ShareableFile
 import com.example.transfer.TransferSessionState
@@ -96,10 +92,8 @@ import com.example.ui.components.RadarPulseCanvas
 import com.example.ui.components.TransferProgressCard
 import com.example.ui.components.rememberRadioReadinessController
 import com.example.ui.theme.CobaltPrimary
-import com.example.ui.theme.CyanSecondary
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MintSuccess
-import com.example.ui.theme.VioletTertiary
 
 private enum class PendingSendAction {
     SCAN_QR,
@@ -624,15 +618,7 @@ fun SendScreen(
                 }
             }
 
-            // Discovered Peers List (only currently available phones)
-            if (discoveredPeers.isNotEmpty()) {
-                items(discoveredPeers, key = { it.id }) { peer ->
-                    DiscoveredPeerCard(
-                        peer = peer,
-                        onClick = { handlePeerSelect(peer) }
-                    )
-                }
-            } else {
+            if (discoveredPeers.isEmpty()) {
                 item {
                     Text(
                         text = "Ask the receiving phone to open ShareMe -> Receive, then tap its phone icon on the radar or tap \"Scan QR Code\" to connect automatically.",
@@ -745,75 +731,6 @@ private fun QueuedFileItemRow(
                 Icon(
                     imageVector = Icons.Rounded.Close,
                     contentDescription = "Remove ${file.name}"
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoveredPeerCard(
-    peer: NearbyPeer,
-    onClick: () -> Unit
-) {
-    val (icon, tint) = when (peer.transport) {
-        PeerTransport.WIFI_DIRECT -> Icons.Rounded.PhoneAndroid to CobaltPrimary
-        PeerTransport.LOCAL_WIFI -> Icons.Rounded.Wifi to CyanSecondary
-        PeerTransport.BLUETOOTH -> Icons.Rounded.Bluetooth to VioletTertiary
-    }
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(MaterialTheme.shapes.medium)
-            .clickable(onClick = onClick)
-            .testTag("peer_card_${peer.id}"),
-        shape = MaterialTheme.shapes.medium,
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = tint.copy(alpha = 0.14f)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = peer.transport.name,
-                    tint = tint,
-                    modifier = Modifier
-                        .padding(10.dp)
-                        .size(24.dp)
-                )
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = peer.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = peer.statusLabel,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Surface(
-                shape = RoundedCornerShape(99.dp),
-                color = tint
-            ) {
-                Text(
-                    text = "Send",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp)
                 )
             }
         }

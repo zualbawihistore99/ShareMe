@@ -129,7 +129,14 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `send screen ready to share card is clickable and radar is visible`() {
+    fun `send screen ready to share card is clickable and radar shows only on-radar phones`() {
+        val peer = NearbyPeer(
+            id = "nsd:ShareMe-Pixel",
+            name = "Pixel 9",
+            transport = PeerTransport.LOCAL_WIFI,
+            ipAddress = "192.168.1.88",
+            statusLabel = "Wi-Fi LAN • 192.168.1.88"
+        )
         composeTestRule.setContent {
             ShareMeTheme {
                 SendScreen(
@@ -142,7 +149,7 @@ class ExampleRobolectricTest {
                     ),
                     queuedFiles = emptyList(),
                     pairedTarget = null,
-                    discoveredPeers = emptyList(),
+                    discoveredPeers = listOf(peer),
                     isScanning = true,
                     discoveryStatus = "Scanning...",
                     wifiEnabled = true,
@@ -172,5 +179,9 @@ class ExampleRobolectricTest {
             .performScrollToNode(hasTestTag("send_radar_canvas"))
         composeTestRule.onNodeWithTag("send_radar_canvas")
             .assertIsDisplayed()
+        composeTestRule.onNodeWithTag("radar_peer_${peer.id}")
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithTag("peer_card_${peer.id}")
+            .assertDoesNotExist()
     }
 }
