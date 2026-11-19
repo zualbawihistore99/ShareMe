@@ -1,0 +1,6 @@
+{
+  "name": "ShareMe",
+  "description": "Fast peer-to-peer phone-to-phone file sharing over Wi-Fi Direct and local Wi-Fi without requiring login or sign-up.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

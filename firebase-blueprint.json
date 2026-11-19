@@ -1,0 +1,198 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Device identity and transfer preference profile scoped to an authenticated Firebase UID.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID owning this device profile."
+        },
+        "deviceName": {
+          "type": "string",
+          "description": "Display nickname shown to nearby ShareMe peers."
+        },
+        "avatarColorIndex": {
+          "type": "integer",
+          "description": "Selected avatar swatch index (0-5)."
+        },
+        "autoAcceptIncoming": {
+          "type": "boolean",
+          "description": "Whether incoming file transfers are accepted automatically."
+        },
+        "preferWifiDirect": {
+          "type": "boolean",
+          "description": "Whether Wi-Fi Direct discovery is preferred over LAN-only."
+        },
+        "transportPreference": {
+          "type": "string",
+          "enum": ["AUTO_BOTH", "WIFI_ONLY", "BLUETOOTH_ONLY"],
+          "description": "Preferred wireless radio mode."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "deviceName",
+        "avatarColorIndex",
+        "autoAcceptIncoming",
+        "preferWifiDirect",
+        "transportPreference",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "TransferRecord": {
+      "title": "TransferRecord",
+      "description": "Audit log of a completed or attempted file transfer belonging to a user.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Owner Firebase Auth UID."
+        },
+        "fileName": {
+          "type": "string",
+          "description": "Transferred file display name."
+        },
+        "mimeType": {
+          "type": "string",
+          "description": "MIME type of the file."
+        },
+        "fileSizeBytes": {
+          "type": "integer",
+          "description": "Total file size in bytes."
+        },
+        "direction": {
+          "type": "string",
+          "enum": ["SENT", "RECEIVED"],
+          "description": "Transfer direction."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["COMPLETED", "FAILED", "CANCELLED"],
+          "description": "Final transfer outcome."
+        },
+        "peerName": {
+          "type": "string",
+          "description": "Remote device display name."
+        },
+        "transportMethod": {
+          "type": "string",
+          "description": "Radio transport used (Wi-Fi Direct, Wi-Fi LAN, Bluetooth, Direct IP)."
+        },
+        "averageSpeedBytesPerSec": {
+          "type": "integer",
+          "description": "Average transfer throughput in bytes per second."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "fileName",
+        "mimeType",
+        "fileSizeBytes",
+        "direction",
+        "status",
+        "peerName",
+        "transportMethod",
+        "averageSpeedBytesPerSec",
+        "createdAt"
+      ]
+    },
+    "PairingSession": {
+      "title": "PairingSession",
+      "description": "Ephemeral peer-to-peer connection signaling session for Wi-Fi or Bluetooth pairing.",
+      "type": "object",
+      "properties": {
+        "hostUserId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the receiving host device."
+        },
+        "guestUserId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the joining sender device (optional until joined)."
+        },
+        "hostDeviceName": {
+          "type": "string",
+          "description": "Receiving device nickname."
+        },
+        "localIp": {
+          "type": "string",
+          "description": "Receiver LAN/P2P IPv4 address."
+        },
+        "port": {
+          "type": "integer",
+          "description": "Receiver TCP socket port."
+        },
+        "sessionPin": {
+          "type": "string",
+          "description": "4-digit pairing PIN."
+        },
+        "bluetoothAddress": {
+          "type": "string",
+          "description": "Optional Bluetooth MAC address."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["WAITING", "CONNECTED", "CLOSED"],
+          "description": "Lifecycle state of the pairing session."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "hostUserId",
+        "hostDeviceName",
+        "localIp",
+        "port",
+        "sessionPin",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserProfile"
+      },
+      "description": "Per-user device profile and preferences."
+    },
+    "/users/{userId}/transfers/{transferId}": {
+      "schema": {
+        "$ref": "#/entities/TransferRecord"
+      },
+      "description": "Per-user file transfer history logs."
+    },
+    "/pairingSessions/{sessionId}": {
+      "schema": {
+        "$ref": "#/entities/PairingSession"
+      },
+      "description": "Ephemeral P2P pairing sessions between two ShareMe devices."
+    }
+  }
+}

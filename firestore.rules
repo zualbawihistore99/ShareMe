@@ -1,0 +1,160 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default-deny global safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    // --- Validation Helpers ---
+    function isValidUserProfile(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.deviceName is string && data.deviceName.size() >= 1 && data.deviceName.size() <= 28 &&
+             data.avatarColorIndex is int && data.avatarColorIndex >= 0 && data.avatarColorIndex <= 5 &&
+             data.autoAcceptIncoming is bool &&
+             data.preferWifiDirect is bool &&
+             data.transportPreference in ['AUTO_BOTH', 'WIFI_ONLY', 'BLUETOOTH_ONLY'] &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    function isValidTransferRecord(data, userId) {
+      return data.userId is string && data.userId == userId &&
+             data.fileName is string && data.fileName.size() >= 1 && data.fileName.size() <= 255 &&
+             data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 128 &&
+             data.fileSizeBytes is int && data.fileSizeBytes >= 0 &&
+             data.direction in ['SENT', 'RECEIVED'] &&
+             data.status in ['COMPLETED', 'FAILED', 'CANCELLED'] &&
+             data.peerName is string && data.peerName.size() >= 1 && data.peerName.size() <= 64 &&
+             data.transportMethod is string && data.transportMethod.size() >= 1 && data.transportMethod.size() <= 64 &&
+             data.averageSpeedBytesPerSec is int && data.averageSpeedBytesPerSec >= 0 &&
+             isValidTimestamp(data.createdAt);
+    }
+
+    function isValidPairingSession(data) {
+      return data.hostUserId is string && data.hostUserId.size() >= 1 && data.hostUserId.size() <= 128 &&
+             (!('guestUserId' in data) || (data.guestUserId is string && data.guestUserId.size() >= 1 && data.guestUserId.size() <= 128)) &&
+             data.hostDeviceName is string && data.hostDeviceName.size() >= 1 && data.hostDeviceName.size() <= 28 &&
+             data.localIp is string && data.localIp.size() >= 7 && data.localIp.size() <= 45 &&
+             data.port is int && data.port >= 1024 && data.port <= 65535 &&
+             data.sessionPin is string && data.sessionPin.matches('^[0-9]{4}$') &&
+             (!('bluetoothAddress' in data) || (data.bluetoothAddress is string && data.bluetoothAddress.size() <= 32)) &&
+             data.status in ['WAITING', 'CONNECTED', 'CLOSED'] &&
+             isValidTimestamp(data.createdAt) &&
+             isValidTimestamp(data.updatedAt);
+    }
+
+    // --- 1. User Device Profiles ---
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if isOwner(userId);
+
+      allow create: if isValidId(userId) &&
+                       isOwner(userId) &&
+                       incoming().keys().hasAll(['userId', 'deviceName', 'avatarColorIndex', 'autoAcceptIncoming', 'preferWifiDirect', 'transportPreference', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'deviceName', 'avatarColorIndex', 'autoAcceptIncoming', 'preferWifiDirect', 'transportPreference', 'createdAt', 'updatedAt']) &&
+                       isValidUserProfile(incoming(), userId);
+
+      allow update: if isValidId(userId) &&
+                       isOwner(userId) &&
+                       isValidUserProfile(incoming(), userId) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['deviceName', 'avatarColorIndex', 'autoAcceptIncoming', 'preferWifiDirect', 'transportPreference', 'updatedAt']);
+
+      allow delete: if isValidId(userId) && isOwner(userId);
+
+      // --- 2. User Transfer History Subcollection ---
+      match /transfers/{transferId} {
+        allow get: if isValidId(userId) && isValidId(transferId) && isOwner(userId);
+        allow list: if isOwner(userId);
+
+        allow create: if isValidId(userId) &&
+                         isValidId(transferId) &&
+                         isOwner(userId) &&
+                         incoming().keys().hasAll(['userId', 'fileName', 'mimeType', 'fileSizeBytes', 'direction', 'status', 'peerName', 'transportMethod', 'averageSpeedBytesPerSec', 'createdAt']) &&
+                         incoming().keys().hasOnly(['userId', 'fileName', 'mimeType', 'fileSizeBytes', 'direction', 'status', 'peerName', 'transportMethod', 'averageSpeedBytesPerSec', 'createdAt']) &&
+                         isValidTransferRecord(incoming(), userId);
+
+        allow update: if false;
+        allow delete: if isValidId(userId) && isValidId(transferId) && isOwner(userId);
+      }
+    }
+
+    // --- 3. Ephemeral Peer Pairing Sessions ---
+    match /pairingSessions/{sessionId} {
+      // Single-document lookup requires knowing the exact sessionId (or being host/guest)
+      allow get: if isValidId(sessionId) && isSignedIn() && (
+        existing().hostUserId == request.auth.uid ||
+        ('guestUserId' in existing() && existing().guestUserId == request.auth.uid) ||
+        existing().status == 'WAITING'
+      );
+
+      // List queries must filter by hostUserId or guestUserId owned by caller
+      allow list: if isSignedIn() && (
+        existing().hostUserId == request.auth.uid ||
+        ('guestUserId' in existing() && existing().guestUserId == request.auth.uid)
+      );
+
+      allow create: if isValidId(sessionId) &&
+                       isSignedIn() &&
+                       incoming().hostUserId == request.auth.uid &&
+                       incoming().status == 'WAITING' &&
+                       !('guestUserId' in incoming()) &&
+                       incoming().keys().hasAll(['hostUserId', 'hostDeviceName', 'localIp', 'port', 'sessionPin', 'status', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['hostUserId', 'hostDeviceName', 'localIp', 'port', 'sessionPin', 'bluetoothAddress', 'status', 'createdAt', 'updatedAt']) &&
+                       isValidPairingSession(incoming());
+
+      allow update: if isValidId(sessionId) &&
+                       isSignedIn() &&
+                       isValidPairingSession(incoming()) &&
+                       existing().status != 'CLOSED' &&
+                       incoming().hostUserId == existing().hostUserId &&
+                       incoming().createdAt == existing().createdAt &&
+                       (
+                         // Action 1: Guest joins an open WAITING session
+                         (
+                           existing().status == 'WAITING' &&
+                           request.auth.uid != existing().hostUserId &&
+                           incoming().status == 'CONNECTED' &&
+                           incoming().guestUserId == request.auth.uid &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['guestUserId', 'status', 'updatedAt'])
+                         ) ||
+                         // Action 2: Host updates endpoint or closes session
+                         (
+                           request.auth.uid == existing().hostUserId &&
+                           (!('guestUserId' in incoming()) || incoming().guestUserId == existing().guestUserId) &&
+                           incoming().diff(existing()).affectedKeys().hasOnly(['hostDeviceName', 'localIp', 'port', 'sessionPin', 'bluetoothAddress', 'status', 'updatedAt'])
+                         )
+                       );
+
+      allow delete: if isValidId(sessionId) && isSignedIn() && existing().hostUserId == request.auth.uid;
+    }
+  }
+}
