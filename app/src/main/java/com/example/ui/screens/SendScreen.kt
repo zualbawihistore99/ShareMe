@@ -1,8 +1,9 @@
 package com.example.ui.screens
 
-import android.bluetooth.BluetoothAdapter
-import android.content.Intent
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dialpad
 import androidx.compose.material.icons.rounded.PhoneAndroid
+import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Send
@@ -42,7 +44,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -68,6 +69,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.local.DevicePreferences
@@ -77,17 +80,26 @@ import com.example.transfer.FileSaver
 import com.example.transfer.LocalNetworkUtils
 import com.example.transfer.NearbyPeer
 import com.example.transfer.PeerTransport
+import com.example.transfer.QrPairingPayload
 import com.example.transfer.ShareableFile
 import com.example.transfer.TransferSessionState
-import com.example.transfer.TransportPreference
+import com.example.ui.components.ConnectionReadinessCard
+import com.example.ui.components.ConnectionReadinessDialog
 import com.example.ui.components.FileCategoryBadge
-import com.example.ui.components.PermissionBannerCard
+import com.example.ui.components.QrScannerDialog
 import com.example.ui.components.RadarPulseCanvas
 import com.example.ui.components.TransferProgressCard
+import com.example.ui.components.rememberRadioReadinessController
 import com.example.ui.theme.CobaltPrimary
 import com.example.ui.theme.CyanSecondary
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.VioletTertiary
+
+private enum class PendingSendAction {
+    SCAN_QR,
+    PEER_TAP,
+    MANUAL_IP
+}
 
 @Composable
 fun SendScreen(
@@ -96,6 +108,7 @@ fun SendScreen(
     discoveredPeers: List<NearbyPeer>,
     isScanning: Boolean,
     discoveryStatus: String?,
+    wifiEnabled: Boolean,
     bluetoothSupported: Boolean,
     bluetoothEnabled: Boolean,
     sessionState: TransferSessionState,
@@ -104,8 +117,9 @@ fun SendScreen(
     onClearQueue: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
-    onSelectTransportPreference: (TransportPreference) -> Unit,
+    onRefreshRadioStates: () -> Unit,
     onSendToPeer: (NearbyPeer) -> Unit,
+    onSendFromQr: (QrPairingPayload) -> Unit,
     onSendDirectToIp: (String, Int, String) -> Unit,
     onCancelTransfer: () -> Unit,
     onResetTransferState: () -> Unit,
@@ -115,23 +129,80 @@ fun SendScreen(
     var hasDiscoveryPermission by remember {
         mutableStateOf(LocalNetworkUtils.hasDiscoveryPermission(context))
     }
-    var showDirectConnectDialog by remember { mutableStateOf(false) }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        hasDiscoveryPermission = results.values.all { it } ||
-            LocalNetworkUtils.hasDiscoveryPermission(context)
-        if (hasDiscoveryPermission) {
-            onStartScan()
+    LifecycleResumeEffect(Unit) {
+        hasDiscoveryPermission = LocalNetworkUtils.hasDiscoveryPermission(context)
+        onRefreshRadioStates()
+        onPauseOrDispose {}
+    }
+    var showDirectConnectDialog by remember { mutableStateOf(false) }
+    var showQrScanner by remember { mutableStateOf(false) }
+    var showReadinessDialog by remember { mutableStateOf(false) }
+    var pendingAction by remember { mutableStateOf<PendingSendAction?>(null) }
+    var pendingPeer by remember { mutableStateOf<NearbyPeer?>(null) }
+
+    val isReadyToConnect = hasDiscoveryPermission &&
+        wifiEnabled &&
+        (!bluetoothSupported || bluetoothEnabled)
+
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            showQrScanner = true
+        } else {
+            Toast.makeText(
+                context,
+                "Camera permission is required to scan a receiver QR code",
+                Toast.LENGTH_SHORT
+            ).show()
         }
     }
 
-    val enableBluetoothLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.StartActivityForResult()
-    ) {
-        onStartScan()
+    val launchQrScannerWithCameraCheck: () -> Unit = {
+        val granted = ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CAMERA
+        ) == PackageManager.PERMISSION_GRANTED
+        if (granted) {
+            showQrScanner = true
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
+
+    val executePendingAction: () -> Unit = {
+        val action = pendingAction
+        val peer = pendingPeer
+        pendingAction = null
+        pendingPeer = null
+        when (action) {
+            PendingSendAction.SCAN_QR -> launchQrScannerWithCameraCheck()
+            PendingSendAction.PEER_TAP -> if (peer != null) onSendToPeer(peer)
+            PendingSendAction.MANUAL_IP -> showDirectConnectDialog = true
+            null -> Unit
+        }
+    }
+
+    val readinessController = rememberRadioReadinessController(
+        bluetoothSupported = bluetoothSupported,
+        onPermissionResult = { granted ->
+            hasDiscoveryPermission = granted
+            if (granted && queuedFiles.isNotEmpty()) {
+                onStartScan()
+            }
+        },
+        onRefreshRadioStates = onRefreshRadioStates,
+        onAllReady = {
+            if (queuedFiles.isNotEmpty()) {
+                onStartScan()
+            }
+            if (showReadinessDialog) {
+                showReadinessDialog = false
+                executePendingAction()
+            }
+        }
+    )
 
     val mediaPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
@@ -145,7 +216,8 @@ fun SendScreen(
         onAddPickedUris(uris)
     }
 
-    DisposableEffect(queuedFiles.isNotEmpty(), hasDiscoveryPermission) {
+    DisposableEffect(queuedFiles.isNotEmpty(), hasDiscoveryPermission, wifiEnabled, bluetoothEnabled) {
+        onRefreshRadioStates()
         if (queuedFiles.isNotEmpty()) {
             onStartScan()
         }
@@ -181,7 +253,7 @@ fun SendScreen(
                         )
                         Text(
                             text = if (queuedFiles.isEmpty()) {
-                                "Pick files to send via Wi-Fi or Bluetooth"
+                                "Pick files to share nearby"
                             } else {
                                 "${queuedFiles.size} file(s) • ${LocalNetworkUtils.formatBytes(totalQueuedBytes)}"
                             },
@@ -299,18 +371,23 @@ fun SendScreen(
                     )
                 }
 
-                // Permission Prompt if needed
-                if (!hasDiscoveryPermission) {
+                // Wi-Fi + Bluetooth + Permission Readiness Gate
+                if (!isReadyToConnect) {
                     item {
-                        PermissionBannerCard(
-                            onGrantClick = {
-                                permissionLauncher.launch(LocalNetworkUtils.requiredDiscoveryPermissions())
-                            }
+                        ConnectionReadinessCard(
+                            hasDiscoveryPermission = hasDiscoveryPermission,
+                            wifiEnabled = wifiEnabled,
+                            bluetoothSupported = bluetoothSupported,
+                            bluetoothEnabled = bluetoothEnabled,
+                            onRequestPermissions = readinessController::requestPermissionsOnly,
+                            onEnableWifi = readinessController::requestWifiOnly,
+                            onEnableBluetooth = readinessController::requestBluetoothOnly,
+                            onEnableAll = readinessController::enableAllInSequence
                         )
                     }
                 }
 
-                // Nearby Devices Radar & Radio Mode Card
+                // Nearby Devices Radar & Pairing Card
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -351,44 +428,9 @@ fun SendScreen(
                                 }
                             }
 
-                            // Transport Radio Filter Chips (Wi-Fi + Bluetooth)
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilterChip(
-                                    selected = devicePreferences.transportPreference == TransportPreference.AUTO_BOTH,
-                                    onClick = { onSelectTransportPreference(TransportPreference.AUTO_BOTH) },
-                                    label = { Text("Wi-Fi + BT") },
-                                    modifier = Modifier.testTag("transport_both_chip")
-                                )
-                                FilterChip(
-                                    selected = devicePreferences.transportPreference == TransportPreference.WIFI_ONLY,
-                                    onClick = { onSelectTransportPreference(TransportPreference.WIFI_ONLY) },
-                                    leadingIcon = {
-                                        Icon(Icons.Rounded.Wifi, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    },
-                                    label = { Text("Wi-Fi") },
-                                    modifier = Modifier.testTag("transport_wifi_chip")
-                                )
-                                FilterChip(
-                                    selected = devicePreferences.transportPreference == TransportPreference.BLUETOOTH_ONLY,
-                                    onClick = { onSelectTransportPreference(TransportPreference.BLUETOOTH_ONLY) },
-                                    leadingIcon = {
-                                        Icon(Icons.Rounded.Bluetooth, contentDescription = null, modifier = Modifier.size(16.dp))
-                                    },
-                                    label = { Text("Bluetooth") },
-                                    modifier = Modifier.testTag("transport_bt_chip")
-                                )
-                            }
-
                             RadarPulseCanvas(
                                 isActive = isScanning,
-                                accentColor = if (devicePreferences.transportPreference == TransportPreference.BLUETOOTH_ONLY) {
-                                    VioletTertiary
-                                } else {
-                                    CobaltPrimary
-                                },
+                                accentColor = CobaltPrimary,
                                 deviceName = devicePreferences.deviceName,
                                 avatarColorIndex = devicePreferences.avatarColorIndex,
                                 modifier = Modifier
@@ -404,34 +446,42 @@ fun SendScreen(
                                 )
                             }
 
-                            if (bluetoothSupported && !bluetoothEnabled &&
-                                devicePreferences.transportPreference != TransportPreference.WIFI_ONLY
+                            Button(
+                                onClick = {
+                                    onRefreshRadioStates()
+                                    if (!isReadyToConnect) {
+                                        pendingAction = PendingSendAction.SCAN_QR
+                                        showReadinessDialog = true
+                                    } else {
+                                        launchQrScannerWithCameraCheck()
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("scan_qr_button")
                             ) {
-                                FilledTonalButton(
-                                    onClick = {
-                                        enableBluetoothLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
-                                    },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("enable_bluetooth_send_button")
-                                ) {
-                                    Icon(Icons.Rounded.Bluetooth, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Turn On Bluetooth for BT Transfer")
-                                }
+                                Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.send_scan_qr))
                             }
 
-                            if (devicePreferences.transportPreference != TransportPreference.BLUETOOTH_ONLY) {
-                                OutlinedButton(
-                                    onClick = { showDirectConnectDialog = true },
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("manual_ip_connect_button")
-                                ) {
-                                    Icon(Icons.Rounded.Dialpad, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(stringResource(R.string.send_manual_connect))
-                                }
+                            OutlinedButton(
+                                onClick = {
+                                    onRefreshRadioStates()
+                                    if (!isReadyToConnect) {
+                                        pendingAction = PendingSendAction.MANUAL_IP
+                                        showReadinessDialog = true
+                                    } else {
+                                        showDirectConnectDialog = true
+                                    }
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("manual_ip_connect_button")
+                            ) {
+                                Icon(Icons.Rounded.Dialpad, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(stringResource(R.string.send_manual_connect))
                             }
                         }
                     }
@@ -442,13 +492,22 @@ fun SendScreen(
                     items(discoveredPeers, key = { it.id }) { peer ->
                         DiscoveredPeerCard(
                             peer = peer,
-                            onClick = { onSendToPeer(peer) }
+                            onClick = {
+                                onRefreshRadioStates()
+                                if (!isReadyToConnect) {
+                                    pendingPeer = peer
+                                    pendingAction = PendingSendAction.PEER_TAP
+                                    showReadinessDialog = true
+                                } else {
+                                    onSendToPeer(peer)
+                                }
+                            }
                         )
                     }
                 } else {
                     item {
                         Text(
-                            text = "Ask the receiving phone to open ShareMe -> Receive (for Wi-Fi or Bluetooth), or tap \"Enter Pairing Code / IP\".",
+                            text = "Ask the receiving phone to open ShareMe -> Receive, then tap \"Scan QR Code\" or pick the device when it appears.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -458,6 +517,42 @@ fun SendScreen(
 
             item { Spacer(modifier = Modifier.height(12.dp)) }
         }
+    }
+
+    if (showReadinessDialog) {
+        ConnectionReadinessDialog(
+            hasDiscoveryPermission = hasDiscoveryPermission,
+            wifiEnabled = wifiEnabled,
+            bluetoothSupported = bluetoothSupported,
+            bluetoothEnabled = bluetoothEnabled,
+            onRequestPermissions = readinessController::requestPermissionsOnly,
+            onEnableWifi = readinessController::requestWifiOnly,
+            onEnableBluetooth = readinessController::requestBluetoothOnly,
+            onEnableAll = readinessController::enableAllInSequence,
+            onDismiss = {
+                showReadinessDialog = false
+                pendingAction = null
+                pendingPeer = null
+            },
+            onAllReady = {
+                showReadinessDialog = false
+                executePendingAction()
+            }
+        )
+    }
+
+    if (showQrScanner) {
+        QrScannerDialog(
+            onDismiss = { showQrScanner = false },
+            onQrScanned = { payload ->
+                showQrScanner = false
+                onSendFromQr(payload)
+            },
+            onManualConnectFallback = {
+                showQrScanner = false
+                showDirectConnectDialog = true
+            }
+        )
     }
 
     if (showDirectConnectDialog) {

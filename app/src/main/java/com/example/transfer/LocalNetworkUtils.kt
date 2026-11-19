@@ -1,9 +1,13 @@
 package com.example.transfer
 
 import android.Manifest
+import android.bluetooth.BluetoothManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import java.net.Inet4Address
 import java.net.NetworkInterface
@@ -63,6 +67,25 @@ object LocalNetworkUtils {
             true
         }
     }
+
+    fun isWifiEnabled(context: Context): Boolean {
+        val wifiManager =
+            context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+        return wifiManager?.isWifiEnabled == true
+    }
+
+    fun isBluetoothEnabled(context: Context): Boolean {
+        val btManager =
+            context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        return btManager?.adapter?.isEnabled == true
+    }
+
+    fun createEnableWifiIntent(): Intent =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            Intent(Settings.Panel.ACTION_WIFI)
+        } else {
+            Intent(Settings.ACTION_WIFI_SETTINGS)
+        }
 
     fun getLocalIpv4Address(): String {
         val candidates = mutableListOf<Pair<Int, String>>()

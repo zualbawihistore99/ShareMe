@@ -78,6 +78,7 @@ class FileTransferEngine(
     ) {
         val btEnabled = bluetoothAdapter?.isEnabled == true
         val canBtListen = btEnabled && LocalNetworkUtils.hasBluetoothConnectPermission(context)
+        val btAddress = resolveOwnBluetoothAddress()
 
         if (serverJob?.isActive == true && serverSocket?.isClosed == false) {
             _endpointInfo.value = _endpointInfo.value.copy(
@@ -85,7 +86,8 @@ class FileTransferEngine(
                 localIp = LocalNetworkUtils.getLocalIpv4Address(),
                 wifiDirectReady = wifiDirectReady,
                 wifiDirectGroupFormed = wifiDirectGroupFormed,
-                bluetoothEnabled = btEnabled
+                bluetoothEnabled = btEnabled,
+                bluetoothAddress = btAddress
             )
             if (canBtListen && btServerJob?.isActive != true) {
                 startBluetoothServerLoop()
@@ -120,7 +122,8 @@ class FileTransferEngine(
                 sessionPin = activePin,
                 wifiDirectReady = wifiDirectReady,
                 wifiDirectGroupFormed = wifiDirectGroupFormed,
-                bluetoothEnabled = btEnabled
+                bluetoothEnabled = btEnabled,
+                bluetoothAddress = btAddress
             )
             withContext(Dispatchers.Main) {
                 onPortBound(boundPort)
@@ -644,6 +647,17 @@ class FileTransferEngine(
                 acquire()
             }
         }.getOrNull()
+    }
+
+    @SuppressLint("MissingPermission", "HardwareIds")
+    private fun resolveOwnBluetoothAddress(): String? {
+        val adapter = bluetoothAdapter ?: return null
+        if (!adapter.isEnabled || !LocalNetworkUtils.hasBluetoothConnectPermission(context)) {
+            return null
+        }
+        val raw = runCatching { adapter.address }.getOrNull()?.trim() ?: return null
+        if (raw.isEmpty() || raw == "02:00:00:00:00:00") return null
+        return raw
     }
 
     private fun generatePin(): String = Random.nextInt(1000, 9999).toString()

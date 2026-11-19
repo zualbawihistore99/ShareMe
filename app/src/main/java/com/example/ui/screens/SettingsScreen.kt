@@ -59,7 +59,6 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.local.DevicePreferences
 import com.example.transfer.LocalNetworkUtils
-import com.example.transfer.TransportPreference
 import com.example.ui.theme.AvatarSwatches
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MintSuccess
@@ -71,7 +70,6 @@ fun SettingsScreen(
     onUpdateAvatarColor: (Int) -> Unit,
     onSetAutoAccept: (Boolean) -> Unit,
     onSetPreferWifiDirect: (Boolean) -> Unit,
-    onSetTransportPreference: (TransportPreference) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -235,35 +233,6 @@ fun SettingsScreen(
                         modifier = Modifier.padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(
-                                text = "Transfer Radio Mode",
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = "Choose whether ShareMe scans and sends over both Wi-Fi and Bluetooth, or a single radio.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf(
-                                    TransportPreference.AUTO_BOTH to "Wi-Fi + BT",
-                                    TransportPreference.WIFI_ONLY to "Wi-Fi",
-                                    TransportPreference.BLUETOOTH_ONLY to "Bluetooth"
-                                ).forEach { (pref, label) ->
-                                    androidx.compose.material3.FilterChip(
-                                        selected = devicePreferences.transportPreference == pref,
-                                        onClick = { onSetTransportPreference(pref) },
-                                        label = { Text(label) },
-                                        modifier = Modifier.testTag("settings_radio_${pref.name}")
-                                    )
-                                }
-                            }
-                        }
-
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,

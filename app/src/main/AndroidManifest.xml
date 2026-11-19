@@ -40,11 +40,17 @@
         android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="32" />
 
+    <!-- Camera permission for scanning QR pairing codes -->
+    <uses-permission android:name="android.permission.CAMERA" />
+
     <uses-feature
         android:name="android.hardware.bluetooth"
         android:required="false" />
     <uses-feature
         android:name="android.hardware.wifi.direct"
+        android:required="false" />
+    <uses-feature
+        android:name="android.hardware.camera"
         android:required="false" />
 
     <application

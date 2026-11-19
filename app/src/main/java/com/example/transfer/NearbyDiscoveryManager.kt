@@ -11,6 +11,7 @@ import android.content.IntentFilter
 import android.net.NetworkInfo
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.net.wifi.WifiManager
 import android.net.wifi.WpsInfo
 import android.net.wifi.p2p.WifiP2pConfig
 import android.net.wifi.p2p.WifiP2pDevice
@@ -32,6 +33,8 @@ class NearbyDiscoveryManager(private val context: Context) {
         context.getSystemService(Context.WIFI_P2P_SERVICE) as? WifiP2pManager
     private val wifiP2pChannel: WifiP2pManager.Channel? =
         wifiP2pManager?.initialize(context, Looper.getMainLooper(), null)
+    private val wifiManager: WifiManager? =
+        context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
     private val bluetoothAdapter: BluetoothAdapter? =
         (context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager)?.adapter
 
@@ -40,6 +43,9 @@ class NearbyDiscoveryManager(private val context: Context) {
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
+
+    private val _wifiEnabled = MutableStateFlow(wifiManager?.isWifiEnabled == true)
+    val wifiEnabled: StateFlow<Boolean> = _wifiEnabled.asStateFlow()
 
     private val _wifiP2pEnabled = MutableStateFlow(false)
     val wifiP2pEnabled: StateFlow<Boolean> = _wifiP2pEnabled.asStateFlow()
@@ -58,6 +64,30 @@ class NearbyDiscoveryManager(private val context: Context) {
     private var discoveryListener: NsdManager.DiscoveryListener? = null
     private var p2pReceiverRegistered = false
     private var btReceiverRegistered = false
+    private var radioReceiverRegistered = false
+
+    private val radioStateReceiver = object : BroadcastReceiver() {
+        override fun onReceive(ctx: Context?, intent: Intent?) {
+            when (intent?.action) {
+                WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                    val state = intent.getIntExtra(
+                        WifiManager.EXTRA_WIFI_STATE,
+                        WifiManager.WIFI_STATE_UNKNOWN
+                    )
+                    _wifiEnabled.value = state == WifiManager.WIFI_STATE_ENABLED
+                }
+
+                BluetoothAdapter.ACTION_STATE_CHANGED -> {
+                    val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                    _bluetoothEnabled.value = state == BluetoothAdapter.STATE_ON
+                }
+            }
+        }
+    }
+
+    init {
+        registerRadioReceiverIfNeeded()
+    }
 
     private val p2pReceiver = object : BroadcastReceiver() {
         @SuppressLint("MissingPermission")
@@ -162,6 +192,7 @@ class NearbyDiscoveryManager(private val context: Context) {
     fun isBluetoothSupported(): Boolean = bluetoothAdapter != null
 
     fun refreshRadioStates() {
+        _wifiEnabled.value = wifiManager?.isWifiEnabled == true
         _bluetoothEnabled.value = bluetoothAdapter?.isEnabled == true
     }
 
@@ -262,11 +293,13 @@ class NearbyDiscoveryManager(private val context: Context) {
 
         _statusMessage.value = when {
             !LocalNetworkUtils.hasDiscoveryPermission(context) ->
-                "Grant Nearby Devices permission for Wi-Fi Direct & Bluetooth"
+                "Allow Nearby Devices permission for Wi-Fi & Bluetooth"
+            !_wifiEnabled.value || (isBluetoothSupported() && !_bluetoothEnabled.value) ->
+                "Turn on Wi-Fi & Bluetooth to connect two phones"
             activeLabels.isNotEmpty() ->
                 "Scanning ${activeLabels.joinToString(" • ")}..."
             else ->
-                "Enable Wi-Fi or Bluetooth to discover nearby phones"
+                "Turn on Wi-Fi & Bluetooth to discover nearby phones"
         }
     }
 
@@ -398,6 +431,27 @@ class NearbyDiscoveryManager(private val context: Context) {
         if (btReceiverRegistered) {
             runCatching { context.unregisterReceiver(btReceiver) }
             btReceiverRegistered = false
+        }
+        if (radioReceiverRegistered) {
+            runCatching { context.unregisterReceiver(radioStateReceiver) }
+            radioReceiverRegistered = false
+        }
+    }
+
+    private fun registerRadioReceiverIfNeeded() {
+        if (radioReceiverRegistered) return
+        val filter = IntentFilter().apply {
+            addAction(WifiManager.WIFI_STATE_CHANGED_ACTION)
+            addAction(BluetoothAdapter.ACTION_STATE_CHANGED)
+        }
+        runCatching {
+            ContextCompat.registerReceiver(
+                context,
+                radioStateReceiver,
+                filter,
+                ContextCompat.RECEIVER_EXPORTED
+            )
+            radioReceiverRegistered = true
         }
     }
 

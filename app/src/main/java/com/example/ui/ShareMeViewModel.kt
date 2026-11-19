@@ -17,6 +17,7 @@ import com.example.transfer.LocalNetworkUtils
 import com.example.transfer.NearbyDiscoveryManager
 import com.example.transfer.NearbyPeer
 import com.example.transfer.PeerTransport
+import com.example.transfer.QrPairingPayload
 import com.example.transfer.ReceiverEndpointInfo
 import com.example.transfer.ShareableFile
 import com.example.transfer.TransferSessionState
@@ -61,6 +62,7 @@ class ShareMeViewModel(
     val discoveredPeers: StateFlow<List<NearbyPeer>> = discoveryManager.peers
     val isScanning: StateFlow<Boolean> = discoveryManager.isScanning
     val discoveryStatus: StateFlow<String?> = discoveryManager.statusMessage
+    val wifiEnabled: StateFlow<Boolean> = discoveryManager.wifiEnabled
     val wifiP2pEnabled: StateFlow<Boolean> = discoveryManager.wifiP2pEnabled
     val bluetoothEnabled: StateFlow<Boolean> = discoveryManager.bluetoothEnabled
     val bluetoothSupported: Boolean = discoveryManager.isBluetoothSupported()
@@ -114,22 +116,17 @@ class ShareMeViewModel(
         _queuedFiles.value = emptyList()
     }
 
+    fun refreshRadioStates() {
+        discoveryManager.refreshRadioStates()
+    }
+
     fun startNearbyScan() {
+        discoveryManager.refreshRadioStates()
         val prefs = devicePreferences.value
         discoveryManager.startDiscovery(
             preferWifiDirect = prefs.preferWifiDirect,
-            transportPreference = prefs.transportPreference
+            transportPreference = TransportPreference.AUTO_BOTH
         )
-    }
-
-    fun setTransportPreferenceAndRescan(preference: TransportPreference) {
-        viewModelScope.launch {
-            preferencesRepository.setTransportPreference(preference)
-            discoveryManager.startDiscovery(
-                preferWifiDirect = devicePreferences.value.preferWifiDirect,
-                transportPreference = preference
-            )
-        }
     }
 
     fun stopNearbyScan() {
@@ -228,6 +225,33 @@ class ShareMeViewModel(
         )
     }
 
+    fun connectAndSendFromQr(payload: QrPairingPayload) {
+        val files = _queuedFiles.value
+        if (files.isEmpty()) return
+        val senderName = devicePreferences.value.deviceName
+        val targetName = payload.deviceName.ifBlank { payload.ip.ifBlank { "ShareMe Receiver" } }
+
+        if (payload.ip.isNotBlank() && payload.ip != "0.0.0.0") {
+            transferEngine.sendFiles(
+                files = files,
+                targetIp = payload.ip,
+                targetPort = payload.port,
+                peerName = targetName,
+                senderDeviceName = senderName,
+                pinCode = payload.pin,
+                transportLabel = "QR Wi-Fi"
+            )
+        } else if (!payload.bluetoothAddress.isNullOrBlank()) {
+            transferEngine.sendFilesViaBluetooth(
+                files = files,
+                bluetoothAddress = payload.bluetoothAddress,
+                peerName = targetName,
+                senderDeviceName = senderName,
+                pinCode = payload.pin
+            )
+        }
+    }
+
     fun startReceiveMode(context: Context) {
         discoveryManager.refreshRadioStates()
         val prefs = devicePreferences.value
@@ -285,10 +309,6 @@ class ShareMeViewModel(
 
     fun setPreferWifiDirect(enabled: Boolean) {
         viewModelScope.launch { preferencesRepository.setPreferWifiDirect(enabled) }
-    }
-
-    fun setTransportPreference(preference: TransportPreference) {
-        viewModelScope.launch { preferencesRepository.setTransportPreference(preference) }
     }
 
     override fun onCleared() {

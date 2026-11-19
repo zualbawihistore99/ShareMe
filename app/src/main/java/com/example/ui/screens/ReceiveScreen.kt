@@ -5,9 +5,11 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -30,6 +32,7 @@ import androidx.compose.material.icons.rounded.Bluetooth
 import androidx.compose.material.icons.rounded.BluetoothSearching
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.Lock
+import androidx.compose.material.icons.rounded.QrCode2
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.WifiTethering
 import androidx.compose.material3.Card
@@ -42,31 +45,43 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import com.example.R
 import com.example.data.local.DevicePreferences
 import com.example.transfer.FileSaver
 import com.example.transfer.IncomingTransferOffer
 import com.example.transfer.LocalNetworkUtils
+import com.example.transfer.QrPairingCodec
 import com.example.transfer.ReceiverEndpointInfo
 import com.example.transfer.TransferSessionState
+import com.example.ui.components.ConnectionReadinessCard
+import com.example.ui.components.ConnectionReadinessDialog
 import com.example.ui.components.IncomingTransferDialog
-import com.example.ui.components.PermissionBannerCard
 import com.example.ui.components.RadarPulseCanvas
 import com.example.ui.components.TransferProgressCard
+import com.example.ui.components.rememberRadioReadinessController
 import com.example.ui.theme.CyanSecondary
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MintSuccess
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -74,10 +89,13 @@ fun ReceiveScreen(
     devicePreferences: DevicePreferences,
     endpointInfo: ReceiverEndpointInfo,
     incomingOffer: IncomingTransferOffer?,
+    wifiEnabled: Boolean,
     bluetoothSupported: Boolean,
+    bluetoothEnabled: Boolean,
     sessionState: TransferSessionState,
     onStartReceiveMode: () -> Unit,
     onStopReceiveMode: () -> Unit,
+    onRefreshRadioStates: () -> Unit,
     onRespondOffer: (Boolean) -> Unit,
     onCancelTransfer: () -> Unit,
     onResetTransferState: () -> Unit,
@@ -88,21 +106,48 @@ fun ReceiveScreen(
         mutableStateOf(LocalNetworkUtils.hasDiscoveryPermission(context))
     }
 
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestMultiplePermissions()
-    ) { results ->
-        hasDiscoveryPermission = results.values.all { it } ||
-            LocalNetworkUtils.hasDiscoveryPermission(context)
+    LifecycleResumeEffect(Unit) {
+        hasDiscoveryPermission = LocalNetworkUtils.hasDiscoveryPermission(context)
+        onRefreshRadioStates()
         onStartReceiveMode()
+        onPauseOrDispose {}
     }
+    val isReadyToConnect = hasDiscoveryPermission &&
+        wifiEnabled &&
+        (!bluetoothSupported || bluetoothEnabled)
+
+    var showReadinessDialog by remember { mutableStateOf(!isReadyToConnect) }
+
+    val readinessController = rememberRadioReadinessController(
+        bluetoothSupported = bluetoothSupported,
+        onPermissionResult = { granted ->
+            hasDiscoveryPermission = granted
+            onStartReceiveMode()
+        },
+        onRefreshRadioStates = onRefreshRadioStates,
+        onAllReady = {
+            showReadinessDialog = false
+            onStartReceiveMode()
+        }
+    )
 
     val btActionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
+        onRefreshRadioStates()
         onStartReceiveMode()
     }
 
+    LaunchedEffect(wifiEnabled, bluetoothEnabled, hasDiscoveryPermission) {
+        onStartReceiveMode()
+        if (wifiEnabled) {
+            delay(1200)
+            onStartReceiveMode()
+        }
+    }
+
     DisposableEffect(Unit) {
+        onRefreshRadioStates()
         onStartReceiveMode()
         onDispose {
             onStopReceiveMode()
@@ -146,12 +191,17 @@ fun ReceiveScreen(
                 }
             }
 
-            if (!hasDiscoveryPermission) {
+            if (!isReadyToConnect) {
                 item {
-                    PermissionBannerCard(
-                        onGrantClick = {
-                            permissionLauncher.launch(LocalNetworkUtils.requiredDiscoveryPermissions())
-                        }
+                    ConnectionReadinessCard(
+                        hasDiscoveryPermission = hasDiscoveryPermission,
+                        wifiEnabled = wifiEnabled,
+                        bluetoothSupported = bluetoothSupported,
+                        bluetoothEnabled = bluetoothEnabled,
+                        onRequestPermissions = readinessController::requestPermissionsOnly,
+                        onEnableWifi = readinessController::requestWifiOnly,
+                        onEnableBluetooth = readinessController::requestBluetoothOnly,
+                        onEnableAll = readinessController::enableAllInSequence
                     )
                 }
             }
@@ -232,6 +282,81 @@ fun ReceiveScreen(
                                         "Make Bluetooth Discoverable (120s)"
                                     }
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Scan-to-Connect QR Code Card
+            item {
+                val qrEndpoint = remember(endpointInfo, devicePreferences.deviceName) {
+                    endpointInfo.copy(deviceName = devicePreferences.deviceName)
+                }
+                val qrPayload = remember(qrEndpoint) {
+                    QrPairingCodec.encode(qrEndpoint)
+                }
+                val qrBitmap by produceState<Bitmap?>(initialValue = null, key1 = qrPayload) {
+                    value = withContext(Dispatchers.Default) {
+                        QrPairingCodec.generateQrBitmap(qrPayload, 512)
+                    }
+                }
+
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.QrCode2,
+                                contentDescription = null,
+                                tint = CyanSecondary
+                            )
+                            Text(
+                                text = stringResource(R.string.receive_qr_title),
+                                style = MaterialTheme.typography.titleMedium
+                            )
+                        }
+
+                        Text(
+                            text = stringResource(R.string.receive_qr_desc),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(20.dp),
+                            color = Color.White,
+                            tonalElevation = 2.dp
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(216.dp)
+                                    .padding(14.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val bmp = qrBitmap
+                                if (bmp != null) {
+                                    Image(
+                                        bitmap = bmp.asImageBitmap(),
+                                        contentDescription = "QR pairing code for ${devicePreferences.deviceName}",
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .testTag("receive_qr_image")
+                                    )
+                                }
                             }
                         }
                     }
@@ -343,6 +468,24 @@ fun ReceiveScreen(
 
             item { Spacer(modifier = Modifier.height(12.dp)) }
         }
+    }
+
+    if (showReadinessDialog && !isReadyToConnect) {
+        ConnectionReadinessDialog(
+            hasDiscoveryPermission = hasDiscoveryPermission,
+            wifiEnabled = wifiEnabled,
+            bluetoothSupported = bluetoothSupported,
+            bluetoothEnabled = bluetoothEnabled,
+            onRequestPermissions = readinessController::requestPermissionsOnly,
+            onEnableWifi = readinessController::requestWifiOnly,
+            onEnableBluetooth = readinessController::requestBluetoothOnly,
+            onEnableAll = readinessController::enableAllInSequence,
+            onDismiss = { showReadinessDialog = false },
+            onAllReady = {
+                showReadinessDialog = false
+                onStartReceiveMode()
+            }
+        )
     }
 
     if (incomingOffer != null) {

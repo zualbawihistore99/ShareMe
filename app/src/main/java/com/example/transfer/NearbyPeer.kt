@@ -35,7 +35,8 @@ data class ReceiverEndpointInfo(
     val wifiDirectReady: Boolean = false,
     val wifiDirectGroupFormed: Boolean = false,
     val bluetoothListening: Boolean = false,
-    val bluetoothEnabled: Boolean = false
+    val bluetoothEnabled: Boolean = false,
+    val bluetoothAddress: String? = null
 )
 
 data class IncomingTransferOffer(

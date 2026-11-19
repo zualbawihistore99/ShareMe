@@ -107,6 +107,7 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
     val discoveredPeers by viewModel.discoveredPeers.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val discoveryStatus by viewModel.discoveryStatus.collectAsStateWithLifecycle()
+    val wifiEnabled by viewModel.wifiEnabled.collectAsStateWithLifecycle()
     val bluetoothEnabled by viewModel.bluetoothEnabled.collectAsStateWithLifecycle()
     val sessionState by viewModel.sessionState.collectAsStateWithLifecycle()
     val receiverEndpoint by viewModel.receiverEndpoint.collectAsStateWithLifecycle()
@@ -213,6 +214,7 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                                 discoveredPeers = discoveredPeers,
                                 isScanning = isScanning,
                                 discoveryStatus = discoveryStatus,
+                                wifiEnabled = wifiEnabled,
                                 bluetoothSupported = viewModel.bluetoothSupported,
                                 bluetoothEnabled = bluetoothEnabled,
                                 sessionState = sessionState,
@@ -221,8 +223,9 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                                 onClearQueue = viewModel::clearQueue,
                                 onStartScan = viewModel::startNearbyScan,
                                 onStopScan = viewModel::stopNearbyScan,
-                                onSelectTransportPreference = viewModel::setTransportPreferenceAndRescan,
+                                onRefreshRadioStates = viewModel::refreshRadioStates,
                                 onSendToPeer = { peer -> viewModel.sendToPeer(peer) },
+                                onSendFromQr = viewModel::connectAndSendFromQr,
                                 onSendDirectToIp = viewModel::sendDirectToIp,
                                 onCancelTransfer = viewModel::cancelTransfer,
                                 onResetTransferState = viewModel::resetTransferState
@@ -233,10 +236,13 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                                 devicePreferences = devicePreferences,
                                 endpointInfo = receiverEndpoint,
                                 incomingOffer = incomingOffer,
+                                wifiEnabled = wifiEnabled,
                                 bluetoothSupported = viewModel.bluetoothSupported,
+                                bluetoothEnabled = bluetoothEnabled,
                                 sessionState = sessionState,
                                 onStartReceiveMode = { viewModel.startReceiveMode(context) },
                                 onStopReceiveMode = viewModel::stopReceiveMode,
+                                onRefreshRadioStates = viewModel::refreshRadioStates,
                                 onRespondOffer = viewModel::respondToIncomingOffer,
                                 onCancelTransfer = viewModel::cancelTransfer,
                                 onResetTransferState = viewModel::resetTransferState
@@ -256,7 +262,6 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                                 onUpdateAvatarColor = viewModel::updateAvatarColor,
                                 onSetAutoAccept = viewModel::setAutoAcceptIncoming,
                                 onSetPreferWifiDirect = viewModel::setPreferWifiDirect,
-                                onSetTransportPreference = viewModel::setTransportPreference,
                                 onBack = { navController.popBackStack() }
                             )
                         }

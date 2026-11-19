@@ -24,11 +24,14 @@
     <string name="send_add_files">Add Files</string>
     <string name="send_add_audio">Add Audio</string>
     <string name="send_scan_devices">Find Nearby Devices</string>
+    <string name="send_scan_qr">Scan QR Code</string>
     <string name="send_manual_connect">Enter Pairing Code / IP</string>
     <string name="send_empty_queue">Choose photos, videos, audio, or any files from your phone to start sending.</string>
 
     <string name="receive_title">Receive Files</string>
     <string name="receive_waiting">Waiting for nearby senders…</string>
+    <string name="receive_qr_title">Scan to Connect</string>
+    <string name="receive_qr_desc">Point the sending phone\'s camera at this QR code to connect instantly.</string>
     <string name="receive_pin_label">Session PIN</string>
     <string name="receive_address_label">Direct Address</string>
     <string name="receive_accept">Accept</string>
@@ -49,4 +52,8 @@
     <string name="permission_nearby_title">Nearby Wi-Fi &amp; Bluetooth Required</string>
     <string name="permission_nearby_desc">ShareMe uses Nearby Devices permission to discover and transfer files over Wi-Fi Direct and Bluetooth without using location or internet.</string>
     <string name="permission_grant">Allow Discovery</string>
+
+    <string name="readiness_title">Turn On Wi-Fi &amp; Bluetooth</string>
+    <string name="readiness_desc">Before connecting two phones, allow Nearby Devices permission and make sure both Wi-Fi and Bluetooth are turned ON.</string>
+    <string name="readiness_enable_button">Allow &amp; Turn On Wi-Fi + Bluetooth</string>
 </resources>
