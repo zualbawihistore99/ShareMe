@@ -56,4 +56,8 @@
     <string name="readiness_title">Turn On Wi-Fi &amp; Bluetooth</string>
     <string name="readiness_desc">Before connecting two phones, allow Nearby Devices permission and make sure both Wi-Fi and Bluetooth are turned ON.</string>
     <string name="readiness_enable_button">Allow &amp; Turn On Wi-Fi + Bluetooth</string>
+
+    <string name="ready_to_share_cta">Tap here to select files, photos, or data</string>
+    <string name="settings_theme_title">Day &amp; Night Theme</string>
+    <string name="settings_theme_desc">Switch between Day, Night, or automatic system appearance</string>
 </resources>

@@ -26,18 +26,20 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.Send
 import androidx.compose.material.icons.rounded.AddPhotoAlternate
 import androidx.compose.material.icons.rounded.AttachFile
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.DeleteSweep
 import androidx.compose.material.icons.rounded.Dialpad
+import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.QrCodeScanner
 import androidx.compose.material.icons.rounded.Radar
 import androidx.compose.material.icons.rounded.Refresh
-import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -67,6 +69,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -93,6 +96,7 @@ import com.example.ui.components.rememberRadioReadinessController
 import com.example.ui.theme.CobaltPrimary
 import com.example.ui.theme.CyanSecondary
 import com.example.ui.theme.JetBrainsMonoFontFamily
+import com.example.ui.theme.MintSuccess
 import com.example.ui.theme.VioletTertiary
 
 private enum class PendingSendAction {
@@ -106,20 +110,22 @@ fun SendScreen(
     devicePreferences: DevicePreferences,
     queuedFiles: List<ShareableFile>,
     discoveredPeers: List<NearbyPeer>,
+    pairedPeer: NearbyPeer?,
     isScanning: Boolean,
     discoveryStatus: String?,
     wifiEnabled: Boolean,
     bluetoothSupported: Boolean,
     bluetoothEnabled: Boolean,
     sessionState: TransferSessionState,
-    onAddPickedUris: (List<Uri>) -> Unit,
+    onAddPickedUris: (List<Uri>, Boolean) -> Unit,
     onRemoveFile: (String) -> Unit,
     onClearQueue: () -> Unit,
+    onClearPairedPeer: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onRefreshRadioStates: () -> Unit,
-    onSendToPeer: (NearbyPeer) -> Unit,
-    onSendFromQr: (QrPairingPayload) -> Unit,
+    onPeerClicked: (NearbyPeer, () -> Unit) -> Unit,
+    onSendFromQr: (QrPairingPayload, () -> Unit) -> Unit,
     onSendDirectToIp: (String, Int, String) -> Unit,
     onCancelTransfer: () -> Unit,
     onResetTransferState: () -> Unit,
@@ -171,6 +177,18 @@ fun SendScreen(
         }
     }
 
+    val mediaPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
+    ) { uris ->
+        onAddPickedUris(uris, true)
+    }
+
+    val filePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        onAddPickedUris(uris, true)
+    }
+
     val executePendingAction: () -> Unit = {
         val action = pendingAction
         val peer = pendingPeer
@@ -178,7 +196,9 @@ fun SendScreen(
         pendingPeer = null
         when (action) {
             PendingSendAction.SCAN_QR -> launchQrScannerWithCameraCheck()
-            PendingSendAction.PEER_TAP -> if (peer != null) onSendToPeer(peer)
+            PendingSendAction.PEER_TAP -> if (peer != null) {
+                onPeerClicked(peer) { filePicker.launch(arrayOf("*/*")) }
+            }
             PendingSendAction.MANUAL_IP -> showDirectConnectDialog = true
             null -> Unit
         }
@@ -188,15 +208,13 @@ fun SendScreen(
         bluetoothSupported = bluetoothSupported,
         onPermissionResult = { granted ->
             hasDiscoveryPermission = granted
-            if (granted && queuedFiles.isNotEmpty()) {
+            if (granted) {
                 onStartScan()
             }
         },
         onRefreshRadioStates = onRefreshRadioStates,
         onAllReady = {
-            if (queuedFiles.isNotEmpty()) {
-                onStartScan()
-            }
+            onStartScan()
             if (showReadinessDialog) {
                 showReadinessDialog = false
                 executePendingAction()
@@ -204,23 +222,9 @@ fun SendScreen(
         }
     )
 
-    val mediaPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
-    ) { uris ->
-        onAddPickedUris(uris)
-    }
-
-    val filePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenMultipleDocuments()
-    ) { uris ->
-        onAddPickedUris(uris)
-    }
-
-    DisposableEffect(queuedFiles.isNotEmpty(), hasDiscoveryPermission, wifiEnabled, bluetoothEnabled) {
+    DisposableEffect(hasDiscoveryPermission, wifiEnabled, bluetoothEnabled) {
         onRefreshRadioStates()
-        if (queuedFiles.isNotEmpty()) {
-            onStartScan()
-        }
+        onStartScan()
         onDispose {
             onStopScan()
         }
@@ -235,7 +239,8 @@ fun SendScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = 640.dp),
+                .widthIn(max = 640.dp)
+                .testTag("send_lazy_column"),
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -330,11 +335,67 @@ fun SendScreen(
                 }
             }
 
+            // Connected / Paired Receiver Banner (when connected via QR or radar)
+            if (pairedPeer != null) {
+                item {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MintSuccess.copy(alpha = 0.14f)
+                        )
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = MintSuccess
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Connected: ${pairedPeer.name}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = if (queuedFiles.isEmpty()) {
+                                        "Tap Ready to Share below to pick files & send automatically"
+                                    } else {
+                                        "${pairedPeer.statusLabel} • Ready to transfer"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = onClearPairedPeer,
+                                modifier = Modifier.testTag("clear_paired_peer_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Disconnect paired phone"
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Queued Files Section
             if (queuedFiles.isEmpty()) {
                 item {
                     Card(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(MaterialTheme.shapes.large)
+                            .clickable { filePicker.launch(arrayOf("*/*")) }
+                            .testTag("ready_to_share_card"),
                         shape = MaterialTheme.shapes.large,
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
@@ -346,8 +407,8 @@ fun SendScreen(
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Rounded.Send,
-                                contentDescription = null,
+                                imageVector = Icons.AutoMirrored.Rounded.Send,
+                                contentDescription = "Select files to share",
                                 tint = CobaltPrimary,
                                 modifier = Modifier.size(36.dp)
                             )
@@ -356,10 +417,33 @@ fun SendScreen(
                                 style = MaterialTheme.typography.titleMedium
                             )
                             Text(
-                                text = stringResource(R.string.send_empty_queue),
+                                text = stringResource(R.string.ready_to_share_cta),
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
                             )
+                            Surface(
+                                shape = RoundedCornerShape(99.dp),
+                                color = CobaltPrimary.copy(alpha = 0.12f)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.FolderOpen,
+                                        contentDescription = null,
+                                        tint = CobaltPrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                    Text(
+                                        text = "Select Files & Data",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = CobaltPrimary
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -370,148 +454,165 @@ fun SendScreen(
                         onRemove = { onRemoveFile(file.id) }
                     )
                 }
+            }
 
-                // Wi-Fi + Bluetooth + Permission Readiness Gate
-                if (!isReadyToConnect) {
-                    item {
-                        ConnectionReadinessCard(
-                            hasDiscoveryPermission = hasDiscoveryPermission,
-                            wifiEnabled = wifiEnabled,
-                            bluetoothSupported = bluetoothSupported,
-                            bluetoothEnabled = bluetoothEnabled,
-                            onRequestPermissions = readinessController::requestPermissionsOnly,
-                            onEnableWifi = readinessController::requestWifiOnly,
-                            onEnableBluetooth = readinessController::requestBluetoothOnly,
-                            onEnableAll = readinessController::enableAllInSequence
-                        )
-                    }
-                }
-
-                // Nearby Devices Radar & Pairing Card
+            // Wi-Fi + Bluetooth + Permission Readiness Gate
+            if (!isReadyToConnect) {
                 item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.large,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                    ConnectionReadinessCard(
+                        hasDiscoveryPermission = hasDiscoveryPermission,
+                        wifiEnabled = wifiEnabled,
+                        bluetoothSupported = bluetoothSupported,
+                        bluetoothEnabled = bluetoothEnabled,
+                        onRequestPermissions = readinessController::requestPermissionsOnly,
+                        onEnableWifi = readinessController::requestWifiOnly,
+                        onEnableBluetooth = readinessController::requestBluetoothOnly,
+                        onEnableAll = readinessController::enableAllInSequence
+                    )
+                }
+            }
+
+            // Nearby Devices Radar & Pairing Card (Always visible so users can search, tap radar phones, or scan QR anytime)
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = MaterialTheme.shapes.large,
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(18.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(18.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Rounded.Radar,
-                                        contentDescription = null,
-                                        tint = CobaltPrimary
-                                    )
-                                    Text(
-                                        text = "Nearby Receivers",
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
-                                }
-                                IconButton(
-                                    onClick = onStartScan,
-                                    modifier = Modifier.testTag("rescan_peers_button")
-                                ) {
-                                    Icon(Icons.Rounded.Refresh, contentDescription = "Rescan devices")
-                                }
-                            }
-
-                            RadarPulseCanvas(
-                                isActive = isScanning,
-                                accentColor = CobaltPrimary,
-                                deviceName = devicePreferences.deviceName,
-                                avatarColorIndex = devicePreferences.avatarColorIndex,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(164.dp)
-                            )
-
-                            if (!discoveryStatus.isNullOrBlank()) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Radar,
+                                    contentDescription = null,
+                                    tint = CobaltPrimary
+                                )
                                 Text(
-                                    text = discoveryStatus,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "Nearby Receivers",
+                                    style = MaterialTheme.typography.titleMedium
                                 )
                             }
-
-                            Button(
-                                onClick = {
-                                    onRefreshRadioStates()
-                                    if (!isReadyToConnect) {
-                                        pendingAction = PendingSendAction.SCAN_QR
-                                        showReadinessDialog = true
-                                    } else {
-                                        launchQrScannerWithCameraCheck()
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("scan_qr_button")
+                            IconButton(
+                                onClick = onStartScan,
+                                modifier = Modifier.testTag("rescan_peers_button")
                             ) {
-                                Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.send_scan_qr))
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    onRefreshRadioStates()
-                                    if (!isReadyToConnect) {
-                                        pendingAction = PendingSendAction.MANUAL_IP
-                                        showReadinessDialog = true
-                                    } else {
-                                        showDirectConnectDialog = true
-                                    }
-                                },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .testTag("manual_ip_connect_button")
-                            ) {
-                                Icon(Icons.Rounded.Dialpad, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.send_manual_connect))
+                                Icon(Icons.Rounded.Refresh, contentDescription = "Rescan devices")
                             }
                         }
-                    }
-                }
 
-                // Discovered Peers List
-                if (discoveredPeers.isNotEmpty()) {
-                    items(discoveredPeers, key = { it.id }) { peer ->
-                        DiscoveredPeerCard(
-                            peer = peer,
-                            onClick = {
+                        RadarPulseCanvas(
+                            isActive = isScanning,
+                            accentColor = CobaltPrimary,
+                            deviceName = devicePreferences.deviceName,
+                            avatarColorIndex = devicePreferences.avatarColorIndex,
+                            peers = discoveredPeers,
+                            selectedPeerId = pairedPeer?.id,
+                            onPeerClick = { peer ->
                                 onRefreshRadioStates()
                                 if (!isReadyToConnect) {
                                     pendingPeer = peer
                                     pendingAction = PendingSendAction.PEER_TAP
                                     showReadinessDialog = true
                                 } else {
-                                    onSendToPeer(peer)
+                                    onPeerClicked(peer) {
+                                        filePicker.launch(arrayOf("*/*"))
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(228.dp)
+                        )
+
+                        if (!discoveryStatus.isNullOrBlank()) {
+                            Text(
+                                text = discoveryStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        Button(
+                            onClick = {
+                                onRefreshRadioStates()
+                                if (!isReadyToConnect) {
+                                    pendingAction = PendingSendAction.SCAN_QR
+                                    showReadinessDialog = true
+                                } else {
+                                    launchQrScannerWithCameraCheck()
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("scan_qr_button")
+                        ) {
+                            Icon(Icons.Rounded.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.send_scan_qr))
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                onRefreshRadioStates()
+                                if (!isReadyToConnect) {
+                                    pendingAction = PendingSendAction.MANUAL_IP
+                                    showReadinessDialog = true
+                                } else {
+                                    showDirectConnectDialog = true
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("manual_ip_connect_button")
+                        ) {
+                            Icon(Icons.Rounded.Dialpad, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.send_manual_connect))
+                        }
+                    }
+                }
+            }
+
+            // Discovered Peers List
+            if (discoveredPeers.isNotEmpty()) {
+                items(discoveredPeers, key = { it.id }) { peer ->
+                    DiscoveredPeerCard(
+                        peer = peer,
+                        onClick = {
+                            onRefreshRadioStates()
+                            if (!isReadyToConnect) {
+                                pendingPeer = peer
+                                pendingAction = PendingSendAction.PEER_TAP
+                                showReadinessDialog = true
+                            } else {
+                                onPeerClicked(peer) {
+                                    filePicker.launch(arrayOf("*/*"))
                                 }
                             }
-                        )
-                    }
-                } else {
-                    item {
-                        Text(
-                            text = "Ask the receiving phone to open ShareMe -> Receive, then tap \"Scan QR Code\" or pick the device when it appears.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                        }
+                    )
+                }
+            } else {
+                item {
+                    Text(
+                        text = "Ask the receiving phone to open ShareMe -> Receive, then tap its phone on the radar or tap \"Scan QR Code\".",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -546,7 +647,14 @@ fun SendScreen(
             onDismiss = { showQrScanner = false },
             onQrScanned = { payload ->
                 showQrScanner = false
-                onSendFromQr(payload)
+                onSendFromQr(payload) {
+                    Toast.makeText(
+                        context,
+                        "Connected to ${payload.deviceName.ifBlank { "Receiver" }} — select files to send",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                    filePicker.launch(arrayOf("*/*"))
+                }
             },
             onManualConnectFallback = {
                 showQrScanner = false

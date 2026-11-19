@@ -96,7 +96,10 @@ private val TopLevelDestinations = listOf(
 )
 
 @Composable
-fun ShareMeApp(viewModel: ShareMeViewModel) {
+fun ShareMeApp(
+    viewModel: ShareMeViewModel,
+    isDarkTheme: Boolean = false
+) {
     val context = LocalContext.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -104,6 +107,7 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
 
     val devicePreferences by viewModel.devicePreferences.collectAsStateWithLifecycle()
     val queuedFiles by viewModel.queuedFiles.collectAsStateWithLifecycle()
+    val pairedPeer by viewModel.pairedPeer.collectAsStateWithLifecycle()
     val discoveredPeers by viewModel.discoveredPeers.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val discoveryStatus by viewModel.discoveryStatus.collectAsStateWithLifecycle()
@@ -200,6 +204,8 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                             HomeScreen(
                                 devicePreferences = devicePreferences,
                                 recentTransfers = recentTransfers,
+                                isDarkTheme = isDarkTheme,
+                                onToggleTheme = { viewModel.toggleDayNightTheme(isDarkTheme) },
                                 onNavigateToSend = { navigateToTopLevel(ShareMeRoutes.SEND) },
                                 onNavigateToReceive = { navigateToTopLevel(ShareMeRoutes.RECEIVE) },
                                 onNavigateToHistory = { navigateToTopLevel(ShareMeRoutes.HISTORY) },
@@ -212,19 +218,23 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                                 devicePreferences = devicePreferences,
                                 queuedFiles = queuedFiles,
                                 discoveredPeers = discoveredPeers,
+                                pairedPeer = pairedPeer,
                                 isScanning = isScanning,
                                 discoveryStatus = discoveryStatus,
                                 wifiEnabled = wifiEnabled,
                                 bluetoothSupported = viewModel.bluetoothSupported,
                                 bluetoothEnabled = bluetoothEnabled,
                                 sessionState = sessionState,
-                                onAddPickedUris = { uris -> viewModel.addPickedUris(context, uris) },
+                                onAddPickedUris = { uris, autoSend ->
+                                    viewModel.addPickedUris(context, uris, autoSendIfPaired = autoSend)
+                                },
                                 onRemoveFile = viewModel::removeQueuedFile,
                                 onClearQueue = viewModel::clearQueue,
+                                onClearPairedPeer = viewModel::clearPairedPeer,
                                 onStartScan = viewModel::startNearbyScan,
                                 onStopScan = viewModel::stopNearbyScan,
                                 onRefreshRadioStates = viewModel::refreshRadioStates,
-                                onSendToPeer = { peer -> viewModel.sendToPeer(peer) },
+                                onPeerClicked = viewModel::onPeerClicked,
                                 onSendFromQr = viewModel::connectAndSendFromQr,
                                 onSendDirectToIp = viewModel::sendDirectToIp,
                                 onCancelTransfer = viewModel::cancelTransfer,
@@ -262,6 +272,7 @@ fun ShareMeApp(viewModel: ShareMeViewModel) {
                                 onUpdateAvatarColor = viewModel::updateAvatarColor,
                                 onSetAutoAccept = viewModel::setAutoAcceptIncoming,
                                 onSetPreferWifiDirect = viewModel::setPreferWifiDirect,
+                                onSetThemeMode = viewModel::setThemeMode,
                                 onBack = { navController.popBackStack() }
                             )
                         }
