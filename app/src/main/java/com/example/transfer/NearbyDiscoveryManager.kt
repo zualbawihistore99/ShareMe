@@ -2,6 +2,7 @@ package com.example.transfer
 
 import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
+import android.bluetooth.BluetoothClass
 import android.bluetooth.BluetoothDevice
 import android.bluetooth.BluetoothManager
 import android.content.BroadcastReceiver
@@ -166,19 +167,23 @@ class NearbyDiscoveryManager(private val context: Context) {
                     val name = runCatching { device.name }.getOrNull()
                     if (name.isNullOrBlank()) return
 
+                    val majorClass = runCatching { device.bluetoothClass?.majorDeviceClass }.getOrNull()
+                    val isAccessory = majorClass != null &&
+                        majorClass != BluetoothClass.Device.Major.PHONE &&
+                        majorClass != BluetoothClass.Device.Major.COMPUTER &&
+                        majorClass != BluetoothClass.Device.Major.MISC &&
+                        majorClass != BluetoothClass.Device.Major.UNCATEGORIZED
+                    if (isAccessory) return
+
                     val peer = NearbyPeer(
                         id = "bt:$address",
                         name = name,
                         transport = PeerTransport.BLUETOOTH,
                         bluetoothAddress = address,
-                        statusLabel = if (device.bondState == BluetoothDevice.BOND_BONDED) {
-                            "Bluetooth • Paired"
-                        } else {
-                            "Bluetooth • Nearby"
-                        }
+                        statusLabel = "Bluetooth • Available"
                     )
                     _peers.update { existing ->
-                        if (existing.any { it.id == peer.id }) existing else existing + peer
+                        existing.filterNot { it.id == peer.id } + peer
                     }
                 }
 
@@ -248,15 +253,8 @@ class NearbyDiscoveryManager(private val context: Context) {
         val useBluetooth = transportPreference == TransportPreference.AUTO_BOTH ||
             transportPreference == TransportPreference.BLUETOOTH_ONLY
 
-        // Clear peers belonging to inactive transports
-        _peers.update { list ->
-            list.filter { peer ->
-                when (peer.transport) {
-                    PeerTransport.BLUETOOTH -> useBluetooth
-                    PeerTransport.LOCAL_WIFI, PeerTransport.WIFI_DIRECT -> useWifi
-                }
-            }
-        }
+        // Start from a clean slate so only currently available devices appear on radar
+        _peers.value = emptyList()
 
         val activeLabels = mutableListOf<String>()
 
@@ -308,30 +306,6 @@ class NearbyDiscoveryManager(private val context: Context) {
         val adapter = bluetoothAdapter ?: return null
         if (!adapter.isEnabled) return null
         if (!LocalNetworkUtils.hasBluetoothConnectPermission(context)) return null
-
-        // Surface paired Bluetooth devices immediately
-        val bondedPeers = runCatching {
-            adapter.bondedDevices?.mapNotNull { device ->
-                val name = device.name?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                val address = device.address ?: return@mapNotNull null
-                NearbyPeer(
-                    id = "bt:$address",
-                    name = name,
-                    transport = PeerTransport.BLUETOOTH,
-                    bluetoothAddress = address,
-                    statusLabel = "Bluetooth • Paired"
-                )
-            } ?: emptyList()
-        }.getOrDefault(emptyList())
-
-        if (bondedPeers.isNotEmpty()) {
-            _peers.update { existing ->
-                val nonBt = existing.filterNot { it.id.startsWith("bt:") }
-                val existingBt = existing.filter { it.id.startsWith("bt:") }
-                val mergedBt = (bondedPeers + existingBt).distinctBy { it.id }
-                nonBt + mergedBt
-            }
-        }
 
         if (LocalNetworkUtils.hasBluetoothScanPermission(context)) {
             runCatching {
@@ -407,6 +381,7 @@ class NearbyDiscoveryManager(private val context: Context) {
 
     fun stopDiscovery() {
         _isScanning.value = false
+        _peers.value = emptyList()
         stopNsdDiscovery()
         stopBluetoothDiscovery()
         runCatching {
@@ -558,11 +533,16 @@ class NearbyDiscoveryManager(private val context: Context) {
     }
 
     private fun updateWifiDirectPeers(devices: List<WifiP2pDevice>) {
-        val p2pPeers = devices.map { device ->
+        val availableDevices = devices.filter { device ->
+            device.status == WifiP2pDevice.AVAILABLE ||
+                device.status == WifiP2pDevice.INVITED ||
+                device.status == WifiP2pDevice.CONNECTED
+        }
+        val p2pPeers = availableDevices.map { device ->
             val label = when (device.status) {
                 WifiP2pDevice.CONNECTED -> "Connected • Wi-Fi Direct"
-                WifiP2pDevice.INVITED -> "Inviting..."
-                WifiP2pDevice.AVAILABLE -> "Wi-Fi Direct Ready"
+                WifiP2pDevice.INVITED -> "Connecting..."
+                WifiP2pDevice.AVAILABLE -> "Wi-Fi Direct • Available"
                 else -> "Wi-Fi Direct"
             }
             NearbyPeer(

@@ -25,18 +25,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
-import androidx.compose.material.icons.rounded.BrightnessAuto
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
-import androidx.compose.material.icons.rounded.DarkMode
-import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.NoAccounts
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -61,7 +57,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.R
-import com.example.data.local.AppThemeMode
 import com.example.data.local.DevicePreferences
 import com.example.transfer.LocalNetworkUtils
 import com.example.ui.theme.AvatarSwatches
@@ -75,7 +70,6 @@ fun SettingsScreen(
     onUpdateAvatarColor: (Int) -> Unit,
     onSetAutoAccept: (Boolean) -> Unit,
     onSetPreferWifiDirect: (Boolean) -> Unit,
-    onSetThemeMode: (AppThemeMode) -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -222,55 +216,6 @@ fun SettingsScreen(
                                 modifier = Modifier.testTag("save_device_name_button")
                             ) {
                                 Text("Save")
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Day & Night Theme Preferences
-            item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = MaterialTheme.shapes.large,
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Column(
-                        modifier = Modifier.padding(18.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.settings_theme_title),
-                            style = MaterialTheme.typography.titleMedium
-                        )
-                        Text(
-                            text = stringResource(R.string.settings_theme_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            val options = listOf(
-                                Triple(AppThemeMode.SYSTEM, "Auto", Icons.Rounded.BrightnessAuto),
-                                Triple(AppThemeMode.DAY, "Day", Icons.Rounded.LightMode),
-                                Triple(AppThemeMode.NIGHT, "Night", Icons.Rounded.DarkMode)
-                            )
-                            options.forEach { (mode, label, icon) ->
-                                FilterChip(
-                                    selected = devicePreferences.themeMode == mode,
-                                    onClick = { onSetThemeMode(mode) },
-                                    leadingIcon = {
-                                        Icon(
-                                            imageVector = icon,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(16.dp)
-                                        )
-                                    },
-                                    label = { Text(label) },
-                                    modifier = Modifier.testTag("theme_mode_${mode.name}")
-                                )
                             }
                         }
                     }

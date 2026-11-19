@@ -7,6 +7,7 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -55,7 +57,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -86,6 +87,7 @@ import com.example.transfer.PeerTransport
 import com.example.transfer.QrPairingPayload
 import com.example.transfer.ShareableFile
 import com.example.transfer.TransferSessionState
+import com.example.ui.PairedReceiverTarget
 import com.example.ui.components.ConnectionReadinessCard
 import com.example.ui.components.ConnectionReadinessDialog
 import com.example.ui.components.FileCategoryBadge
@@ -109,23 +111,23 @@ private enum class PendingSendAction {
 fun SendScreen(
     devicePreferences: DevicePreferences,
     queuedFiles: List<ShareableFile>,
+    pairedTarget: PairedReceiverTarget?,
     discoveredPeers: List<NearbyPeer>,
-    pairedPeer: NearbyPeer?,
     isScanning: Boolean,
     discoveryStatus: String?,
     wifiEnabled: Boolean,
     bluetoothSupported: Boolean,
     bluetoothEnabled: Boolean,
     sessionState: TransferSessionState,
-    onAddPickedUris: (List<Uri>, Boolean) -> Unit,
+    onAddPickedUris: (List<Uri>) -> Unit,
     onRemoveFile: (String) -> Unit,
     onClearQueue: () -> Unit,
-    onClearPairedPeer: () -> Unit,
+    onClearPairedTarget: () -> Unit,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit,
     onRefreshRadioStates: () -> Unit,
-    onPeerClicked: (NearbyPeer, () -> Unit) -> Unit,
-    onSendFromQr: (QrPairingPayload, () -> Unit) -> Unit,
+    onSendToPeer: (NearbyPeer) -> Unit,
+    onSendFromQr: (QrPairingPayload) -> Unit,
     onSendDirectToIp: (String, Int, String) -> Unit,
     onCancelTransfer: () -> Unit,
     onResetTransferState: () -> Unit,
@@ -136,11 +138,6 @@ fun SendScreen(
         mutableStateOf(LocalNetworkUtils.hasDiscoveryPermission(context))
     }
 
-    LifecycleResumeEffect(Unit) {
-        hasDiscoveryPermission = LocalNetworkUtils.hasDiscoveryPermission(context)
-        onRefreshRadioStates()
-        onPauseOrDispose {}
-    }
     var showDirectConnectDialog by remember { mutableStateOf(false) }
     var showQrScanner by remember { mutableStateOf(false) }
     var showReadinessDialog by remember { mutableStateOf(false) }
@@ -150,6 +147,7 @@ fun SendScreen(
     val isReadyToConnect = hasDiscoveryPermission &&
         wifiEnabled &&
         (!bluetoothSupported || bluetoothEnabled)
+    val canScanQr = wifiEnabled || (bluetoothSupported && bluetoothEnabled)
 
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -180,13 +178,27 @@ fun SendScreen(
     val mediaPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 50)
     ) { uris ->
-        onAddPickedUris(uris, true)
+        onAddPickedUris(uris)
     }
 
     val filePicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
     ) { uris ->
-        onAddPickedUris(uris, true)
+        onAddPickedUris(uris)
+    }
+
+    val handlePeerSelect: (NearbyPeer) -> Unit = { peer ->
+        onRefreshRadioStates()
+        if (!isReadyToConnect) {
+            pendingPeer = peer
+            pendingAction = PendingSendAction.PEER_TAP
+            showReadinessDialog = true
+        } else {
+            onSendToPeer(peer)
+            if (queuedFiles.isEmpty()) {
+                filePicker.launch(arrayOf("*/*"))
+            }
+        }
     }
 
     val executePendingAction: () -> Unit = {
@@ -197,7 +209,10 @@ fun SendScreen(
         when (action) {
             PendingSendAction.SCAN_QR -> launchQrScannerWithCameraCheck()
             PendingSendAction.PEER_TAP -> if (peer != null) {
-                onPeerClicked(peer) { filePicker.launch(arrayOf("*/*")) }
+                onSendToPeer(peer)
+                if (queuedFiles.isEmpty()) {
+                    filePicker.launch(arrayOf("*/*"))
+                }
             }
             PendingSendAction.MANUAL_IP -> showDirectConnectDialog = true
             null -> Unit
@@ -222,10 +237,11 @@ fun SendScreen(
         }
     )
 
-    DisposableEffect(hasDiscoveryPermission, wifiEnabled, bluetoothEnabled) {
+    LifecycleResumeEffect(hasDiscoveryPermission, wifiEnabled, bluetoothEnabled) {
+        hasDiscoveryPermission = LocalNetworkUtils.hasDiscoveryPermission(context)
         onRefreshRadioStates()
         onStartScan()
-        onDispose {
+        onPauseOrDispose {
             onStopScan()
         }
     }
@@ -335,58 +351,6 @@ fun SendScreen(
                 }
             }
 
-            // Connected / Paired Receiver Banner (when connected via QR or radar)
-            if (pairedPeer != null) {
-                item {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = MaterialTheme.shapes.medium,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MintSuccess.copy(alpha = 0.14f)
-                        )
-                    ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 14.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Rounded.CheckCircle,
-                                contentDescription = null,
-                                tint = MintSuccess
-                            )
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = "Connected: ${pairedPeer.name}",
-                                    style = MaterialTheme.typography.titleSmall,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = if (queuedFiles.isEmpty()) {
-                                        "Tap Ready to Share below to pick files & send automatically"
-                                    } else {
-                                        "${pairedPeer.statusLabel} • Ready to transfer"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            IconButton(
-                                onClick = onClearPairedPeer,
-                                modifier = Modifier.testTag("clear_paired_peer_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Rounded.Close,
-                                    contentDescription = "Disconnect paired phone"
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
             // Queued Files Section
             if (queuedFiles.isEmpty()) {
                 item {
@@ -397,27 +361,37 @@ fun SendScreen(
                             .clickable { filePicker.launch(arrayOf("*/*")) }
                             .testTag("ready_to_share_card"),
                         shape = MaterialTheme.shapes.large,
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.5.dp, CobaltPrimary.copy(alpha = 0.28f))
                     ) {
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(24.dp),
+                                .padding(18.dp),
                             horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Rounded.Send,
-                                contentDescription = "Select files to share",
-                                tint = CobaltPrimary,
-                                modifier = Modifier.size(36.dp)
-                            )
+                            Surface(
+                                shape = CircleShape,
+                                color = CobaltPrimary.copy(alpha = 0.14f),
+                                modifier = Modifier.size(48.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.AutoMirrored.Rounded.Send,
+                                        contentDescription = "Tap to select files and data",
+                                        tint = CobaltPrimary,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                }
+                            }
                             Text(
                                 text = "Ready to Share",
-                                style = MaterialTheme.typography.titleMedium
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = stringResource(R.string.ready_to_share_cta),
+                                text = stringResource(R.string.send_empty_queue),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 textAlign = TextAlign.Center
@@ -427,7 +401,7 @@ fun SendScreen(
                                 color = CobaltPrimary.copy(alpha = 0.12f)
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 7.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
@@ -438,9 +412,10 @@ fun SendScreen(
                                         modifier = Modifier.size(16.dp)
                                     )
                                     Text(
-                                        text = "Select Files & Data",
-                                        style = MaterialTheme.typography.labelLarge,
-                                        color = CobaltPrimary
+                                        text = "Tap to Select Files & Data",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = CobaltPrimary,
+                                        fontWeight = FontWeight.SemiBold
                                     )
                                 }
                             }
@@ -453,6 +428,55 @@ fun SendScreen(
                         file = file,
                         onRemove = { onRemoveFile(file.id) }
                     )
+                }
+            }
+
+            // Connected Receiver Banner (when paired before selecting files)
+            if (pairedTarget != null) {
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("paired_target_banner"),
+                        shape = MaterialTheme.shapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MintSuccess.copy(alpha = 0.14f)
+                        ),
+                        border = BorderStroke(1.dp, MintSuccess.copy(alpha = 0.4f))
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.CheckCircle,
+                                contentDescription = null,
+                                tint = MintSuccess,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "Connected to ${pairedTarget.displayName}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "Select any file or data above to send automatically",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = onClearPairedTarget) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "Disconnect paired receiver"
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -472,7 +496,7 @@ fun SendScreen(
                 }
             }
 
-            // Nearby Devices Radar & Pairing Card (Always visible so users can search, tap radar phones, or scan QR anytime)
+            // Nearby Devices Radar & Pairing Card (always visible & clear for live scanning)
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -504,6 +528,20 @@ fun SendScreen(
                                     text = "Nearby Receivers",
                                     style = MaterialTheme.typography.titleMedium
                                 )
+                                if (discoveredPeers.isNotEmpty()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(99.dp),
+                                        color = MintSuccess.copy(alpha = 0.16f)
+                                    ) {
+                                        Text(
+                                            text = "${discoveredPeers.size} live",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MintSuccess,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
                             }
                             IconButton(
                                 onClick = onStartScan,
@@ -519,37 +557,36 @@ fun SendScreen(
                             deviceName = devicePreferences.deviceName,
                             avatarColorIndex = devicePreferences.avatarColorIndex,
                             peers = discoveredPeers,
-                            selectedPeerId = pairedPeer?.id,
-                            onPeerClick = { peer ->
-                                onRefreshRadioStates()
-                                if (!isReadyToConnect) {
-                                    pendingPeer = peer
-                                    pendingAction = PendingSendAction.PEER_TAP
-                                    showReadinessDialog = true
-                                } else {
-                                    onPeerClicked(peer) {
-                                        filePicker.launch(arrayOf("*/*"))
-                                    }
-                                }
-                            },
+                            selectedPeerId = pairedTarget?.targetId,
+                            onPeerClick = handlePeerSelect,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(228.dp)
+                                .height(288.dp)
+                                .testTag("send_radar_canvas")
                         )
 
-                        if (!discoveryStatus.isNullOrBlank()) {
-                            Text(
-                                text = discoveryStatus,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                textAlign = TextAlign.Center
-                            )
+                        val radarSubtitle = when {
+                            discoveredPeers.isNotEmpty() ->
+                                "${discoveredPeers.size} available phone(s) in range — tap a phone on radar to select"
+                            !discoveryStatus.isNullOrBlank() -> discoveryStatus
+                            else -> "Scanning nearby range for active receivers..."
                         }
+                        Text(
+                            text = radarSubtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (discoveredPeers.isNotEmpty()) {
+                                CobaltPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            fontWeight = if (discoveredPeers.isNotEmpty()) FontWeight.Medium else FontWeight.Normal,
+                            textAlign = TextAlign.Center
+                        )
 
                         Button(
                             onClick = {
                                 onRefreshRadioStates()
-                                if (!isReadyToConnect) {
+                                if (!canScanQr) {
                                     pendingAction = PendingSendAction.SCAN_QR
                                     showReadinessDialog = true
                                 } else {
@@ -587,29 +624,18 @@ fun SendScreen(
                 }
             }
 
-            // Discovered Peers List
+            // Discovered Peers List (only currently available phones)
             if (discoveredPeers.isNotEmpty()) {
                 items(discoveredPeers, key = { it.id }) { peer ->
                     DiscoveredPeerCard(
                         peer = peer,
-                        onClick = {
-                            onRefreshRadioStates()
-                            if (!isReadyToConnect) {
-                                pendingPeer = peer
-                                pendingAction = PendingSendAction.PEER_TAP
-                                showReadinessDialog = true
-                            } else {
-                                onPeerClicked(peer) {
-                                    filePicker.launch(arrayOf("*/*"))
-                                }
-                            }
-                        }
+                        onClick = { handlePeerSelect(peer) }
                     )
                 }
             } else {
                 item {
                     Text(
-                        text = "Ask the receiving phone to open ShareMe -> Receive, then tap its phone on the radar or tap \"Scan QR Code\".",
+                        text = "Ask the receiving phone to open ShareMe -> Receive, then tap its phone icon on the radar or tap \"Scan QR Code\" to connect automatically.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -647,14 +673,7 @@ fun SendScreen(
             onDismiss = { showQrScanner = false },
             onQrScanned = { payload ->
                 showQrScanner = false
-                onSendFromQr(payload) {
-                    Toast.makeText(
-                        context,
-                        "Connected to ${payload.deviceName.ifBlank { "Receiver" }} — select files to send",
-                        Toast.LENGTH_SHORT
-                    ).show()
-                    filePicker.launch(arrayOf("*/*"))
-                }
+                onSendFromQr(payload)
             },
             onManualConnectFallback = {
                 showQrScanner = false

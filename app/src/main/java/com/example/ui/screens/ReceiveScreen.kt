@@ -141,8 +141,10 @@ fun ReceiveScreen(
     LaunchedEffect(wifiEnabled, bluetoothEnabled, hasDiscoveryPermission) {
         onStartReceiveMode()
         if (wifiEnabled) {
-            delay(1200)
-            onStartReceiveMode()
+            repeat(4) {
+                delay(1200)
+                onStartReceiveMode()
+            }
         }
     }
 

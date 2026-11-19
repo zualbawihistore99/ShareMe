@@ -24,9 +24,6 @@ private val DarkColorScheme = darkColorScheme(
     secondaryContainer = CyanContainerDark,
     onSecondaryContainer = Color(0xFFCFFAFE),
     tertiary = VioletTertiaryDark,
-    onTertiary = Color(0xFF1E1B4B),
-    tertiaryContainer = VioletContainerDark,
-    onTertiaryContainer = Color(0xFFE0E7FF),
     background = SlateBackgroundDark,
     onBackground = OnSurfaceDark,
     surface = SlateSurfaceDark,
@@ -34,10 +31,7 @@ private val DarkColorScheme = darkColorScheme(
     surfaceVariant = SurfaceVariantDark,
     onSurfaceVariant = OnSurfaceVariantDark,
     outline = OutlineDark,
-    error = CoralError,
-    onError = Color.White,
-    errorContainer = CoralErrorContainerDark,
-    onErrorContainer = Color(0xFFFFE4E6)
+    error = CoralError
 )
 
 private val LightColorScheme = lightColorScheme(
@@ -50,9 +44,7 @@ private val LightColorScheme = lightColorScheme(
     secondaryContainer = CyanContainerLight,
     onSecondaryContainer = CyanOnContainerLight,
     tertiary = VioletTertiary,
-    onTertiary = Color.White,
     tertiaryContainer = VioletContainerLight,
-    onTertiaryContainer = Color(0xFF1E1B4B),
     background = SlateBackgroundLight,
     onBackground = OnSurfaceLight,
     surface = PureSurfaceLight,
@@ -61,9 +53,7 @@ private val LightColorScheme = lightColorScheme(
     onSurfaceVariant = OnSurfaceVariantLight,
     outline = OutlineLight,
     error = CoralError,
-    onError = Color.White,
-    errorContainer = CoralErrorContainer,
-    onErrorContainer = Color(0xFF4C0519)
+    errorContainer = CoralErrorContainer
 )
 
 val ShareMeShapes = Shapes(

@@ -1,11 +1,15 @@
 package com.example.ui.components
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,7 +20,6 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
@@ -27,15 +30,16 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.Bluetooth
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FolderOpen
 import androidx.compose.material.icons.rounded.Image
+import androidx.compose.material.icons.rounded.InsertDriveFile
 import androidx.compose.material.icons.rounded.Movie
 import androidx.compose.material.icons.rounded.PhoneAndroid
 import androidx.compose.material.icons.rounded.Share
@@ -56,17 +60,23 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -76,6 +86,8 @@ import com.example.transfer.LocalNetworkUtils
 import com.example.transfer.NearbyPeer
 import com.example.transfer.PeerTransport
 import com.example.transfer.TransferSessionState
+import kotlin.math.cos
+import kotlin.math.sin
 import com.example.ui.theme.AmberWarning
 import com.example.ui.theme.AvatarSwatches
 import com.example.ui.theme.CobaltPrimary
@@ -84,9 +96,6 @@ import com.example.ui.theme.CyanSecondary
 import com.example.ui.theme.JetBrainsMonoFontFamily
 import com.example.ui.theme.MintSuccess
 import com.example.ui.theme.VioletTertiary
-import kotlin.math.PI
-import kotlin.math.cos
-import kotlin.math.sin
 
 @Composable
 fun RadarPulseCanvas(
@@ -104,7 +113,7 @@ fun RadarPulseCanvas(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            animation = tween(durationMillis = 2400, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "pulse1"
@@ -113,69 +122,117 @@ fun RadarPulseCanvas(
         initialValue = 0.5f,
         targetValue = 1.5f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 2200, easing = LinearEasing),
+            animation = tween(durationMillis = 2400, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "pulse2"
     )
+    val sweepAngle by transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 3200, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "radar_sweep"
+    )
 
     val avatarColor = AvatarSwatches.getOrElse(avatarColorIndex) { CobaltPrimary }
+    val visiblePeers = remember(peers) { peers.take(6) }
 
     BoxWithConstraints(
-        modifier = modifier.defaultMinSize(minWidth = 280.dp, minHeight = 228.dp),
+        modifier = modifier,
         contentAlignment = Alignment.Center
     ) {
-        val availableWidth = if (constraints.hasFixedWidth) maxWidth else minWidth.coerceAtLeast(280.dp)
-        val availableHeight = if (constraints.hasFixedHeight) maxHeight else minHeight.coerceAtLeast(228.dp)
+        val maxRadiusDp = (minOf(maxWidth, maxHeight) / 2f) * 0.90f
 
         Canvas(modifier = Modifier.matchParentSize()) {
             val center = Offset(size.width / 2f, size.height / 2f)
-            val maxRadius = (minOf(size.width, size.height) / 2f) * 0.92f
-            val baseRadius = maxRadius * 0.34f
+            val maxRadius = (minOf(size.width, size.height) / 2f) * 0.90f
+            val baseRadius = maxRadius * 0.28f
 
-            // Subtle static guide rings
+            // Clear radar field backdrop
             drawCircle(
-                color = accentColor.copy(alpha = 0.16f),
-                radius = maxRadius * 0.65f,
-                center = center,
-                style = Stroke(width = 1.5.dp.toPx())
-            )
-            drawCircle(
-                color = accentColor.copy(alpha = 0.10f),
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        accentColor.copy(alpha = 0.14f),
+                        accentColor.copy(alpha = 0.05f),
+                        accentColor.copy(alpha = 0.02f)
+                    ),
+                    center = center,
+                    radius = maxRadius
+                ),
                 radius = maxRadius,
-                center = center,
-                style = Stroke(width = 1.5.dp.toPx())
+                center = center
             )
+
+            // Crosshair axis lines
+            drawLine(
+                color = accentColor.copy(alpha = 0.12f),
+                start = Offset(center.x - maxRadius, center.y),
+                end = Offset(center.x + maxRadius, center.y),
+                strokeWidth = 1.dp.toPx()
+            )
+            drawLine(
+                color = accentColor.copy(alpha = 0.12f),
+                start = Offset(center.x, center.y - maxRadius),
+                end = Offset(center.x, center.y + maxRadius),
+                strokeWidth = 1.dp.toPx()
+            )
+
+            // Crisp concentric range rings
+            listOf(0.36f, 0.68f, 1.0f).forEachIndexed { idx, factor ->
+                drawCircle(
+                    color = accentColor.copy(alpha = if (idx == 2) 0.28f else 0.18f),
+                    radius = maxRadius * factor,
+                    center = center,
+                    style = Stroke(width = if (idx == 2) 1.8.dp.toPx() else 1.2.dp.toPx())
+                )
+            }
 
             if (isActive) {
+                // Rotating radar sweep beam
+                rotate(degrees = sweepAngle, pivot = center) {
+                    drawArc(
+                        brush = Brush.sweepGradient(
+                            0.0f to Color.Transparent,
+                            0.75f to Color.Transparent,
+                            0.94f to accentColor.copy(alpha = 0.14f),
+                            1.0f to accentColor.copy(alpha = 0.34f),
+                            center = center
+                        ),
+                        startAngle = 0f,
+                        sweepAngle = 360f,
+                        useCenter = true,
+                        topLeft = Offset(center.x - maxRadius, center.y - maxRadius),
+                        size = Size(maxRadius * 2f, maxRadius * 2f)
+                    )
+                }
+
+                // Expanding pulse waves
                 listOf(pulse1, pulse2 % 1f).forEach { progress ->
                     val radius = baseRadius + (maxRadius - baseRadius) * progress
                     val alpha = (1f - progress).coerceIn(0f, 1f) * 0.45f
                     drawCircle(
-                        brush = Brush.radialGradient(
-                            colors = listOf(
-                                accentColor.copy(alpha = alpha * 0.25f),
-                                accentColor.copy(alpha = alpha)
-                            ),
-                            center = center,
-                            radius = radius
-                        ),
+                        color = accentColor.copy(alpha = alpha),
                         radius = radius,
                         center = center,
-                        style = Stroke(width = 2.5.dp.toPx())
+                        style = Stroke(width = 2.dp.toPx())
                     )
                 }
             }
         }
 
+        // Center self device badge
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
+                    .border(2.dp, Color.White.copy(alpha = 0.85f), CircleShape)
                     .background(
                         Brush.linearGradient(
                             listOf(avatarColor, accentColor)
@@ -187,7 +244,7 @@ fun RadarPulseCanvas(
                     imageVector = Icons.Rounded.PhoneAndroid,
                     contentDescription = "This phone",
                     tint = Color.White,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.size(24.dp)
                 )
             }
             Surface(
@@ -197,94 +254,169 @@ fun RadarPulseCanvas(
             ) {
                 Text(
                     text = deviceName,
-                    style = MaterialTheme.typography.labelMedium,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    modifier = Modifier
+                        .widthIn(max = 96.dp)
+                        .padding(horizontal = 10.dp, vertical = 3.dp)
                 )
             }
         }
 
-        val visiblePeers = peers.take(6)
-        if (visiblePeers.isNotEmpty()) {
-            val orbitRadiusX = ((availableWidth - 96.dp) / 2f).coerceAtLeast(72.dp)
-            val orbitRadiusY = ((availableHeight - 78.dp) / 2f).coerceAtLeast(62.dp)
+        // Pop-up visible phones inside radar range
+        val angles = radarAnglesForCount(visiblePeers.size)
+        visiblePeers.forEachIndexed { index, peer ->
+            val angleDeg = angles[index]
+            val orbitFactor = if (visiblePeers.size > 3 && index % 2 == 1) 0.74f else 0.66f
+            val orbitRadius = maxRadiusDp * orbitFactor
+            val rad = Math.toRadians(angleDeg.toDouble())
+            val offsetX = (orbitRadius.value * cos(rad)).dp
+            val offsetY = (orbitRadius.value * sin(rad)).dp
 
-            visiblePeers.forEachIndexed { index, peer ->
-                val angleDeg = -90.0 + (360.0 / visiblePeers.size) * index + 24.0
-                val angleRad = angleDeg * PI / 180.0
-                val ringScale = if (visiblePeers.size > 3 && index % 2 == 1) 0.78f else 0.96f
-                val offsetX = orbitRadiusX * ringScale * cos(angleRad).toFloat()
-                val offsetY = orbitRadiusY * ringScale * sin(angleRad).toFloat()
+            RadarPeerNode(
+                peer = peer,
+                selected = selectedPeerId == peer.id,
+                pulseProgress = pulse1,
+                onClick = { onPeerClick?.invoke(peer) },
+                modifier = Modifier.offset(x = offsetX, y = offsetY)
+            )
+        }
+    }
+}
 
-                val peerTint = when (peer.transport) {
-                    PeerTransport.WIFI_DIRECT -> CobaltPrimary
-                    PeerTransport.LOCAL_WIFI -> CyanSecondary
-                    PeerTransport.BLUETOOTH -> VioletTertiary
+private fun radarAnglesForCount(count: Int): List<Float> = when (count) {
+    0 -> emptyList()
+    1 -> listOf(-48f)
+    2 -> listOf(-134f, -46f)
+    3 -> listOf(-145f, -35f, 16f)
+    4 -> listOf(-148f, -32f, 18f, 162f)
+    5 -> listOf(-152f, -90f, -28f, 20f, 160f)
+    else -> listOf(-155f, -108f, -55f, -10f, 24f, 158f)
+}
+
+@Composable
+private fun RadarPeerNode(
+    peer: NearbyPeer,
+    selected: Boolean,
+    pulseProgress: Float,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val popScale = remember(peer.id) { Animatable(0.25f) }
+    LaunchedEffect(peer.id) {
+        popScale.animateTo(
+            targetValue = 1f,
+            animationSpec = spring(
+                dampingRatio = Spring.DampingRatioMediumBouncy,
+                stiffness = Spring.StiffnessMediumLow
+            )
+        )
+    }
+
+    val transportColor = when {
+        selected -> MintSuccess
+        peer.transport == PeerTransport.WIFI_DIRECT -> CobaltPrimary
+        peer.transport == PeerTransport.LOCAL_WIFI -> CyanSecondary
+        else -> VioletTertiary
+    }
+    val transportShort = when (peer.transport) {
+        PeerTransport.WIFI_DIRECT -> "Direct"
+        PeerTransport.LOCAL_WIFI -> "Wi-Fi"
+        PeerTransport.BLUETOOTH -> "BT"
+    }
+
+    Column(
+        modifier = modifier
+            .scale(popScale.value)
+            .clip(RoundedCornerShape(16.dp))
+            .clickable(onClick = onClick)
+            .minimumInteractiveComponentSize()
+            .padding(4.dp)
+            .testTag("radar_peer_${peer.id}"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(54.dp)
+        ) {
+            // Subtle pop-up beacon halo around clickable receiver phone
+            Box(
+                modifier = Modifier
+                    .size((46 + (pulseProgress * 8f)).dp)
+                    .clip(CircleShape)
+                    .background(transportColor.copy(alpha = (1f - pulseProgress) * 0.28f))
+            )
+            Surface(
+                modifier = Modifier.size(46.dp),
+                shape = CircleShape,
+                color = transportColor,
+                shadowElevation = 6.dp,
+                border = BorderStroke(2.dp, Color.White)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = if (selected) Icons.Rounded.Check else Icons.Rounded.PhoneAndroid,
+                        contentDescription = "Select ${peer.name}",
+                        tint = Color.White,
+                        modifier = Modifier.size(22.dp)
+                    )
                 }
-                val isHighlighted = peer.isConnected || peer.id == selectedPeerId
-
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(3.dp),
-                    modifier = Modifier
-                        .offset(x = offsetX, y = offsetY)
-                        .clip(RoundedCornerShape(16.dp))
-                        .clickable(enabled = onPeerClick != null) {
-                            onPeerClick?.invoke(peer)
-                        }
-                        .minimumInteractiveComponentSize()
-                        .padding(2.dp)
-                        .testTag("radar_peer_${peer.id}")
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(CircleShape)
-                            .background(peerTint)
-                            .then(
-                                if (isHighlighted) {
-                                    Modifier.border(2.5.dp, MintSuccess, CircleShape)
-                                } else {
-                                    Modifier.border(2.dp, Color.White.copy(alpha = 0.85f), CircleShape)
-                                }
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = when (peer.transport) {
-                                PeerTransport.BLUETOOTH -> Icons.Rounded.Bluetooth
-                                PeerTransport.LOCAL_WIFI -> Icons.Rounded.Wifi
-                                PeerTransport.WIFI_DIRECT -> Icons.Rounded.PhoneAndroid
-                            },
-                            contentDescription = "Select ${peer.name} on radar",
-                            tint = Color.White,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Surface(
-                        shape = RoundedCornerShape(99.dp),
-                        color = if (isHighlighted) {
-                            MintSuccess
-                        } else {
-                            MaterialTheme.colorScheme.surface.copy(alpha = 0.95f)
+            }
+            // Small transport indicator dot
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .size(18.dp),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.5.dp, transportColor)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        imageVector = when (peer.transport) {
+                            PeerTransport.BLUETOOTH -> Icons.Rounded.Bluetooth
+                            else -> Icons.Rounded.Wifi
                         },
-                        tonalElevation = 3.dp
-                    ) {
-                        Text(
-                            text = peer.name,
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isHighlighted) Color.White else MaterialTheme.colorScheme.onSurface,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier
-                                .widthIn(max = 92.dp)
-                                .padding(horizontal = 8.dp, vertical = 2.dp)
-                        )
-                    }
+                        contentDescription = null,
+                        tint = transportColor,
+                        modifier = Modifier.size(10.dp)
+                    )
                 }
+            }
+        }
+
+        Surface(
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 4.dp,
+            border = BorderStroke(1.5.dp, transportColor.copy(alpha = 0.85f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .widthIn(min = 64.dp, max = 112.dp)
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = peer.name,
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = if (selected) "Selected" else "$transportShort • Tap",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = transportColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
             }
         }
     }
@@ -300,7 +432,7 @@ fun FileCategoryBadge(
         FileCategory.VIDEO -> Icons.Rounded.Movie to VioletTertiary
         FileCategory.AUDIO -> Icons.Rounded.AudioFile to CyanSecondary
         FileCategory.DOCUMENT -> Icons.Rounded.Description to AmberWarning
-        FileCategory.OTHER -> Icons.AutoMirrored.Rounded.InsertDriveFile to MintSuccess
+        FileCategory.OTHER -> Icons.Rounded.InsertDriveFile to MintSuccess
     }
 
     Box(

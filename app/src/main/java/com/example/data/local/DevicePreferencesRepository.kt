@@ -17,19 +17,12 @@ private val Context.shareMeDataStore: DataStore<Preferences> by preferencesDataS
     name = "shareme_device_prefs"
 )
 
-enum class AppThemeMode {
-    SYSTEM,
-    DAY,
-    NIGHT
-}
-
 data class DevicePreferences(
     val deviceName: String,
     val avatarColorIndex: Int,
     val autoAcceptIncoming: Boolean,
     val preferWifiDirect: Boolean,
-    val transportPreference: TransportPreference = TransportPreference.AUTO_BOTH,
-    val themeMode: AppThemeMode = AppThemeMode.SYSTEM
+    val transportPreference: TransportPreference = TransportPreference.AUTO_BOTH
 )
 
 class DevicePreferencesRepository(private val context: Context) {
@@ -40,7 +33,6 @@ class DevicePreferencesRepository(private val context: Context) {
         val AUTO_ACCEPT = booleanPreferencesKey("auto_accept_incoming")
         val PREFER_WIFI_DIRECT = booleanPreferencesKey("prefer_wifi_direct")
         val TRANSPORT_PREFERENCE = stringPreferencesKey("transport_preference")
-        val THEME_MODE = stringPreferencesKey("theme_mode")
     }
 
     val preferences: Flow<DevicePreferences> = context.shareMeDataStore.data.map { prefs ->
@@ -49,18 +41,12 @@ class DevicePreferencesRepository(private val context: Context) {
             if (rawTransport != null) TransportPreference.valueOf(rawTransport) else TransportPreference.AUTO_BOTH
         }.getOrDefault(TransportPreference.AUTO_BOTH)
 
-        val rawTheme = prefs[Keys.THEME_MODE]
-        val theme = runCatching {
-            if (rawTheme != null) AppThemeMode.valueOf(rawTheme) else AppThemeMode.SYSTEM
-        }.getOrDefault(AppThemeMode.SYSTEM)
-
         DevicePreferences(
             deviceName = prefs[Keys.DEVICE_NAME]?.takeIf { it.isNotBlank() } ?: defaultDeviceName(),
             avatarColorIndex = (prefs[Keys.AVATAR_COLOR_INDEX] ?: 0).coerceIn(0, 5),
             autoAcceptIncoming = prefs[Keys.AUTO_ACCEPT] ?: false,
             preferWifiDirect = prefs[Keys.PREFER_WIFI_DIRECT] ?: true,
-            transportPreference = transport,
-            themeMode = theme
+            transportPreference = transport
         )
     }
 
@@ -83,10 +69,6 @@ class DevicePreferencesRepository(private val context: Context) {
 
     suspend fun setTransportPreference(preference: TransportPreference) {
         context.shareMeDataStore.edit { it[Keys.TRANSPORT_PREFERENCE] = preference.name }
-    }
-
-    suspend fun setThemeMode(mode: AppThemeMode) {
-        context.shareMeDataStore.edit { it[Keys.THEME_MODE] = mode.name }
     }
 
     private fun defaultDeviceName(): String {

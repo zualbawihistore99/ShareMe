@@ -28,11 +28,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.AudioFile
 import androidx.compose.material.icons.rounded.Bolt
-import androidx.compose.material.icons.rounded.DarkMode
 import androidx.compose.material.icons.rounded.Description
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.FolderCopy
-import androidx.compose.material.icons.rounded.LightMode
 import androidx.compose.material.icons.rounded.NorthEast
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Settings
@@ -81,8 +79,6 @@ import com.example.ui.theme.MintSuccess
 fun HomeScreen(
     devicePreferences: DevicePreferences,
     recentTransfers: List<TransferRecordEntity>,
-    isDarkTheme: Boolean,
-    onToggleTheme: () -> Unit,
     onNavigateToSend: () -> Unit,
     onNavigateToReceive: () -> Unit,
     onNavigateToHistory: () -> Unit,
@@ -205,16 +201,6 @@ fun HomeScreen(
                                     modifier = Modifier.widthIn(max = 110.dp)
                                 )
                             }
-                        }
-
-                        IconButton(
-                            onClick = onToggleTheme,
-                            modifier = Modifier.testTag("home_theme_toggle_button")
-                        ) {
-                            Icon(
-                                imageVector = if (isDarkTheme) Icons.Rounded.LightMode else Icons.Rounded.DarkMode,
-                                contentDescription = if (isDarkTheme) "Switch to Day theme" else "Switch to Night theme"
-                            )
                         }
 
                         IconButton(

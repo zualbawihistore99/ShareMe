@@ -30,7 +30,6 @@ val CobaltContainerDark = Color(0xFF1E3A8A)
 val CyanSecondaryDark = Color(0xFF22D3EE)
 val CyanContainerDark = Color(0xFF164E63)
 val VioletTertiaryDark = Color(0xFFA5B4FC)
-val VioletContainerDark = Color(0xFF312E81)
 
 val SlateBackgroundDark = Color(0xFF090E1A)
 val SlateSurfaceDark = Color(0xFF111827)
@@ -45,7 +44,6 @@ val MintSuccessContainer = Color(0xFFD1FAE5)
 val AmberWarning = Color(0xFFF59E0B)
 val CoralError = Color(0xFFF43F5E)
 val CoralErrorContainer = Color(0xFFFFE4E6)
-val CoralErrorContainerDark = Color(0xFF4C0519)
 
 // Device Avatar Swatches
 val AvatarSwatches = listOf(

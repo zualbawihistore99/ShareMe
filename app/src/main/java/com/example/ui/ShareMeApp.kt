@@ -96,10 +96,7 @@ private val TopLevelDestinations = listOf(
 )
 
 @Composable
-fun ShareMeApp(
-    viewModel: ShareMeViewModel,
-    isDarkTheme: Boolean = false
-) {
+fun ShareMeApp(viewModel: ShareMeViewModel) {
     val context = LocalContext.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
@@ -107,7 +104,7 @@ fun ShareMeApp(
 
     val devicePreferences by viewModel.devicePreferences.collectAsStateWithLifecycle()
     val queuedFiles by viewModel.queuedFiles.collectAsStateWithLifecycle()
-    val pairedPeer by viewModel.pairedPeer.collectAsStateWithLifecycle()
+    val pairedTarget by viewModel.pairedTarget.collectAsStateWithLifecycle()
     val discoveredPeers by viewModel.discoveredPeers.collectAsStateWithLifecycle()
     val isScanning by viewModel.isScanning.collectAsStateWithLifecycle()
     val discoveryStatus by viewModel.discoveryStatus.collectAsStateWithLifecycle()
@@ -204,8 +201,6 @@ fun ShareMeApp(
                             HomeScreen(
                                 devicePreferences = devicePreferences,
                                 recentTransfers = recentTransfers,
-                                isDarkTheme = isDarkTheme,
-                                onToggleTheme = { viewModel.toggleDayNightTheme(isDarkTheme) },
                                 onNavigateToSend = { navigateToTopLevel(ShareMeRoutes.SEND) },
                                 onNavigateToReceive = { navigateToTopLevel(ShareMeRoutes.RECEIVE) },
                                 onNavigateToHistory = { navigateToTopLevel(ShareMeRoutes.HISTORY) },
@@ -217,24 +212,22 @@ fun ShareMeApp(
                             SendScreen(
                                 devicePreferences = devicePreferences,
                                 queuedFiles = queuedFiles,
+                                pairedTarget = pairedTarget,
                                 discoveredPeers = discoveredPeers,
-                                pairedPeer = pairedPeer,
                                 isScanning = isScanning,
                                 discoveryStatus = discoveryStatus,
                                 wifiEnabled = wifiEnabled,
                                 bluetoothSupported = viewModel.bluetoothSupported,
                                 bluetoothEnabled = bluetoothEnabled,
                                 sessionState = sessionState,
-                                onAddPickedUris = { uris, autoSend ->
-                                    viewModel.addPickedUris(context, uris, autoSendIfPaired = autoSend)
-                                },
+                                onAddPickedUris = { uris -> viewModel.addPickedUris(context, uris) },
                                 onRemoveFile = viewModel::removeQueuedFile,
                                 onClearQueue = viewModel::clearQueue,
-                                onClearPairedPeer = viewModel::clearPairedPeer,
+                                onClearPairedTarget = viewModel::clearPairedTarget,
                                 onStartScan = viewModel::startNearbyScan,
                                 onStopScan = viewModel::stopNearbyScan,
                                 onRefreshRadioStates = viewModel::refreshRadioStates,
-                                onPeerClicked = viewModel::onPeerClicked,
+                                onSendToPeer = { peer -> viewModel.sendToPeer(peer) },
                                 onSendFromQr = viewModel::connectAndSendFromQr,
                                 onSendDirectToIp = viewModel::sendDirectToIp,
                                 onCancelTransfer = viewModel::cancelTransfer,
@@ -272,7 +265,6 @@ fun ShareMeApp(
                                 onUpdateAvatarColor = viewModel::updateAvatarColor,
                                 onSetAutoAccept = viewModel::setAutoAcceptIncoming,
                                 onSetPreferWifiDirect = viewModel::setPreferWifiDirect,
-                                onSetThemeMode = viewModel::setThemeMode,
                                 onBack = { navController.popBackStack() }
                             )
                         }

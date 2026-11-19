@@ -6,7 +6,6 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.AppContainer
-import com.example.data.local.AppThemeMode
 import com.example.data.local.DevicePreferences
 import com.example.data.local.DevicePreferencesRepository
 import com.example.data.local.TransferRecordEntity
@@ -29,7 +28,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
@@ -37,6 +35,22 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+
+sealed interface PairedReceiverTarget {
+    val displayName: String
+    val targetId: String?
+
+    data class Peer(val peer: NearbyPeer) : PairedReceiverTarget {
+        override val displayName: String get() = peer.name
+        override val targetId: String get() = peer.id
+    }
+
+    data class Qr(val payload: QrPairingPayload) : PairedReceiverTarget {
+        override val displayName: String
+            get() = payload.deviceName.ifBlank { payload.ip.ifBlank { "ShareMe Receiver" } }
+        override val targetId: String? get() = null
+    }
+}
 
 class ShareMeViewModel(
     private val transferRepository: TransferRepository,
@@ -61,23 +75,10 @@ class ShareMeViewModel(
     private val _queuedFiles = MutableStateFlow<List<ShareableFile>>(emptyList())
     val queuedFiles: StateFlow<List<ShareableFile>> = _queuedFiles.asStateFlow()
 
-    private val _pairedPeer = MutableStateFlow<NearbyPeer?>(null)
-    val pairedPeer: StateFlow<NearbyPeer?> = _pairedPeer.asStateFlow()
-    private val _pairedQrPayload = MutableStateFlow<QrPairingPayload?>(null)
+    private val _pairedTarget = MutableStateFlow<PairedReceiverTarget?>(null)
+    val pairedTarget: StateFlow<PairedReceiverTarget?> = _pairedTarget.asStateFlow()
 
-    val discoveredPeers: StateFlow<List<NearbyPeer>> =
-        combine(discoveryManager.peers, _pairedPeer) { discovered, paired ->
-            if (paired == null) {
-                discovered
-            } else {
-                listOf(paired) + discovered.filterNot { it.id == paired.id }
-            }
-        }.stateIn(
-            scope = viewModelScope,
-            started = SharingStarted.WhileSubscribed(5000),
-            initialValue = emptyList()
-        )
-
+    val discoveredPeers: StateFlow<List<NearbyPeer>> = discoveryManager.peers
     val isScanning: StateFlow<Boolean> = discoveryManager.isScanning
     val discoveryStatus: StateFlow<String?> = discoveryManager.statusMessage
     val wifiEnabled: StateFlow<Boolean> = discoveryManager.wifiEnabled
@@ -113,7 +114,7 @@ class ShareMeViewModel(
         }
     }
 
-    fun addPickedUris(context: Context, uris: List<Uri>, autoSendIfPaired: Boolean = false) {
+    fun addPickedUris(context: Context, uris: List<Uri>) {
         if (uris.isEmpty()) return
         viewModelScope.launch {
             val resolved = withContext(Dispatchers.IO) {
@@ -124,21 +125,19 @@ class ShareMeViewModel(
                 val existingUris = current.mapTo(HashSet()) { it.uri }
                 current + resolved.filter { it.uri !in existingUris }
             }
-            if (autoSendIfPaired && sessionState.value is TransferSessionState.Idle) {
-                val qr = _pairedQrPayload.value
-                val peer = _pairedPeer.value
-                val files = _queuedFiles.value
-                if (qr != null && files.isNotEmpty()) {
-                    transferEngine.sendFilesFromQr(
-                        files = files,
-                        payload = qr,
-                        senderDeviceName = devicePreferences.value.deviceName
-                    )
-                } else if (peer != null && files.isNotEmpty()) {
-                    sendToPeer(peer)
+            val target = _pairedTarget.value
+            if (target != null && _queuedFiles.value.isNotEmpty()) {
+                _pairedTarget.value = null
+                when (target) {
+                    is PairedReceiverTarget.Peer -> sendToPeer(target.peer)
+                    is PairedReceiverTarget.Qr -> connectAndSendFromQr(target.payload)
                 }
             }
         }
+    }
+
+    fun clearPairedTarget() {
+        _pairedTarget.value = null
     }
 
     fun removeQueuedFile(fileId: String) {
@@ -147,11 +146,6 @@ class ShareMeViewModel(
 
     fun clearQueue() {
         _queuedFiles.value = emptyList()
-    }
-
-    fun clearPairedPeer() {
-        _pairedPeer.value = null
-        _pairedQrPayload.value = null
     }
 
     fun refreshRadioStates() {
@@ -173,7 +167,11 @@ class ShareMeViewModel(
 
     fun sendToPeer(peer: NearbyPeer, pinCode: String = "") {
         val files = _queuedFiles.value
-        if (files.isEmpty()) return
+        if (files.isEmpty()) {
+            _pairedTarget.value = PairedReceiverTarget.Peer(peer)
+            return
+        }
+        _pairedTarget.value = null
         val senderName = devicePreferences.value.deviceName
 
         when (peer.transport) {
@@ -263,63 +261,35 @@ class ShareMeViewModel(
         )
     }
 
-    fun onPeerClicked(peer: NearbyPeer, onNeedFiles: () -> Unit) {
-        _pairedPeer.value = peer.copy(isConnected = true)
-        if (peer.id.startsWith("qr:").not()) {
-            _pairedQrPayload.value = null
-        }
+    fun connectAndSendFromQr(payload: QrPairingPayload) {
         val files = _queuedFiles.value
-        if (files.isNotEmpty()) {
-            val qr = _pairedQrPayload.value
-            if (qr != null && peer.id.startsWith("qr:")) {
-                transferEngine.sendFilesFromQr(
-                    files = files,
-                    payload = qr,
-                    senderDeviceName = devicePreferences.value.deviceName
-                )
-            } else {
-                sendToPeer(peer)
-            }
-        } else {
-            onNeedFiles()
+        if (files.isEmpty()) {
+            _pairedTarget.value = PairedReceiverTarget.Qr(payload)
+            return
         }
-    }
-
-    fun connectAndSendFromQr(payload: QrPairingPayload, onNeedFiles: () -> Unit) {
+        _pairedTarget.value = null
         val senderName = devicePreferences.value.deviceName
         val targetName = payload.deviceName.ifBlank { payload.ip.ifBlank { "ShareMe Receiver" } }
-        val hasValidIp = payload.ip.isNotBlank() && payload.ip != "0.0.0.0"
-        val qrPeer = NearbyPeer(
-            id = "qr:${payload.ip.ifBlank { payload.bluetoothAddress ?: targetName }}",
-            name = targetName,
-            transport = if (hasValidIp) PeerTransport.LOCAL_WIFI else PeerTransport.BLUETOOTH,
-            ipAddress = payload.ip.takeIf { hasValidIp },
-            port = payload.port,
-            bluetoothAddress = payload.bluetoothAddress,
-            statusLabel = "Connected via QR",
-            isConnected = true
-        )
 
-        _pairedQrPayload.value = payload
-        val files = _queuedFiles.value
-
-        if (files.isNotEmpty()) {
-            _pairedPeer.value = qrPeer
-            transferEngine.sendFilesFromQr(
+        if (payload.ip.isNotBlank() && payload.ip != "0.0.0.0") {
+            transferEngine.sendFiles(
                 files = files,
-                payload = payload,
-                senderDeviceName = senderName
+                targetIp = payload.ip,
+                targetPort = payload.port,
+                peerName = targetName,
+                senderDeviceName = senderName,
+                pinCode = payload.pin,
+                transportLabel = "QR Wi-Fi",
+                fallbackBluetoothAddress = payload.bluetoothAddress
             )
-        } else {
-            transferEngine.probeAndPairQr(
-                payload = payload,
-                senderDeviceName = senderName
-            ) { connected, transport, _ ->
-                if (connected) {
-                    _pairedPeer.value = qrPeer.copy(transport = transport)
-                    onNeedFiles()
-                }
-            }
+        } else if (!payload.bluetoothAddress.isNullOrBlank()) {
+            transferEngine.sendFilesViaBluetooth(
+                files = files,
+                bluetoothAddress = payload.bluetoothAddress,
+                peerName = targetName,
+                senderDeviceName = senderName,
+                pinCode = payload.pin
+            )
         }
     }
 
@@ -380,15 +350,6 @@ class ShareMeViewModel(
 
     fun setPreferWifiDirect(enabled: Boolean) {
         viewModelScope.launch { preferencesRepository.setPreferWifiDirect(enabled) }
-    }
-
-    fun setThemeMode(mode: AppThemeMode) {
-        viewModelScope.launch { preferencesRepository.setThemeMode(mode) }
-    }
-
-    fun toggleDayNightTheme(currentlyDark: Boolean) {
-        val next = if (currentlyDark) AppThemeMode.DAY else AppThemeMode.NIGHT
-        viewModelScope.launch { preferencesRepository.setThemeMode(next) }
     }
 
     override fun onCleared() {

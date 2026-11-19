@@ -26,7 +26,7 @@
     <string name="send_scan_devices">Find Nearby Devices</string>
     <string name="send_scan_qr">Scan QR Code</string>
     <string name="send_manual_connect">Enter Pairing Code / IP</string>
-    <string name="send_empty_queue">Choose photos, videos, audio, or any files from your phone to start sending.</string>
+    <string name="send_empty_queue">Tap here to choose photos, videos, audio, documents, or any data from your phone.</string>
 
     <string name="receive_title">Receive Files</string>
     <string name="receive_waiting">Waiting for nearby senders…</string>
@@ -56,8 +56,4 @@
     <string name="readiness_title">Turn On Wi-Fi &amp; Bluetooth</string>
     <string name="readiness_desc">Before connecting two phones, allow Nearby Devices permission and make sure both Wi-Fi and Bluetooth are turned ON.</string>
     <string name="readiness_enable_button">Allow &amp; Turn On Wi-Fi + Bluetooth</string>
-
-    <string name="ready_to_share_cta">Tap here to select files, photos, or data</string>
-    <string name="settings_theme_title">Day &amp; Night Theme</string>
-    <string name="settings_theme_desc">Switch between Day, Night, or automatic system appearance</string>
 </resources>

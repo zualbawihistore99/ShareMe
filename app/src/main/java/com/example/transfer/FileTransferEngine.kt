@@ -230,7 +230,8 @@ class FileTransferEngine(
         peerName: String,
         senderDeviceName: String,
         pinCode: String,
-        transportLabel: String
+        transportLabel: String,
+        fallbackBluetoothAddress: String? = null
     ) {
         if (files.isEmpty()) return
         activeTransferJob?.cancel()
@@ -247,7 +248,7 @@ class FileTransferEngine(
                 activeClientSocket = socket
                 socket.soTimeout = 65_000
                 socket.tcpNoDelay = true
-                socket.connect(InetSocketAddress(targetIp, targetPort), 10_000)
+                socket.connect(InetSocketAddress(targetIp, targetPort), 6_000)
 
                 streamSendFiles(
                     rawOutput = socket.getOutputStream(),
@@ -262,6 +263,22 @@ class FileTransferEngine(
             } catch (_: CancellationException) {
                 _sessionState.value = TransferSessionState.Error("Transfer cancelled")
             } catch (e: Exception) {
+                val canFallbackBt = !fallbackBluetoothAddress.isNullOrBlank() &&
+                    bluetoothAdapter?.isEnabled == true &&
+                    LocalNetworkUtils.hasBluetoothConnectPermission(context)
+                if (canFallbackBt) {
+                    runCatching { activeClientSocket?.close() }
+                    activeClientSocket = null
+                    runCatching { wifiLock?.release() }
+                    sendFilesViaBluetooth(
+                        files = files,
+                        bluetoothAddress = fallbackBluetoothAddress!!,
+                        peerName = peerName,
+                        senderDeviceName = senderDeviceName,
+                        pinCode = pinCode
+                    )
+                    return@launch
+                }
                 _sessionState.value = TransferSessionState.Error(
                     e.localizedMessage ?: "Wi-Fi transfer connection failed"
                 )
@@ -271,207 +288,6 @@ class FileTransferEngine(
                 runCatching { wifiLock?.release() }
             }
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    fun sendFilesFromQr(
-        files: List<ShareableFile>,
-        payload: QrPairingPayload,
-        senderDeviceName: String
-    ) {
-        if (files.isEmpty()) return
-        val targetName = payload.deviceName.ifBlank { payload.ip.ifBlank { "ShareMe Receiver" } }
-        val hasValidIp = payload.ip.isNotBlank() && payload.ip != "0.0.0.0"
-        val btAddress = payload.bluetoothAddress?.takeIf { it.isNotBlank() }
-
-        if (!hasValidIp && btAddress != null) {
-            sendFilesViaBluetooth(
-                files = files,
-                bluetoothAddress = btAddress,
-                peerName = targetName,
-                senderDeviceName = senderDeviceName,
-                pinCode = payload.pin
-            )
-            return
-        }
-
-        if (!hasValidIp) {
-            _sessionState.value = TransferSessionState.Error("Scanned QR code has no active Wi-Fi or Bluetooth address")
-            return
-        }
-
-        activeTransferJob?.cancel()
-        activeTransferJob = scope.launch {
-            val wifiLock = acquireWifiLock()
-            try {
-                _sessionState.value = TransferSessionState.Connecting(
-                    peerName = targetName,
-                    statusText = "Connecting automatically via QR (${payload.ip}:${payload.port})..."
-                )
-
-                val tcpSocket = runCatching {
-                    Socket().apply {
-                        activeClientSocket = this
-                        soTimeout = 65_000
-                        tcpNoDelay = true
-                        connect(InetSocketAddress(payload.ip, payload.port), 6_000)
-                    }
-                }.getOrNull()
-
-                if (tcpSocket != null) {
-                    streamSendFiles(
-                        rawOutput = tcpSocket.getOutputStream(),
-                        rawInput = tcpSocket.getInputStream(),
-                        files = files,
-                        peerName = targetName,
-                        senderDeviceName = senderDeviceName,
-                        pinCode = payload.pin,
-                        transportLabel = "QR Wi-Fi",
-                        chunkSize = 65_536
-                    )
-                    return@launch
-                }
-
-                if (btAddress != null &&
-                    bluetoothAdapter?.isEnabled == true &&
-                    LocalNetworkUtils.hasBluetoothConnectPermission(context)
-                ) {
-                    _sessionState.value = TransferSessionState.Connecting(
-                        peerName = targetName,
-                        statusText = "Switching to Bluetooth RFCOMM..."
-                    )
-                    if (LocalNetworkUtils.hasBluetoothScanPermission(context)) {
-                        runCatching {
-                            if (bluetoothAdapter.isDiscovering) bluetoothAdapter.cancelDiscovery()
-                        }
-                    }
-                    val device = bluetoothAdapter.getRemoteDevice(btAddress)
-                    val btSocket = connectBluetoothSocket(device)
-                    activeBtClientSocket = btSocket
-                    streamSendFiles(
-                        rawOutput = btSocket.outputStream,
-                        rawInput = btSocket.inputStream,
-                        files = files,
-                        peerName = targetName,
-                        senderDeviceName = senderDeviceName,
-                        pinCode = payload.pin,
-                        transportLabel = "QR Bluetooth",
-                        chunkSize = 16_384
-                    )
-                } else {
-                    _sessionState.value = TransferSessionState.Error(
-                        "Could not reach $targetName at ${payload.ip}:${payload.port}. Ensure both phones share the same Wi-Fi or hotspot."
-                    )
-                }
-            } catch (_: CancellationException) {
-                _sessionState.value = TransferSessionState.Error("Transfer cancelled")
-            } catch (e: Exception) {
-                _sessionState.value = TransferSessionState.Error(
-                    e.localizedMessage ?: "QR connection failed"
-                )
-            } finally {
-                runCatching { activeClientSocket?.close() }
-                activeClientSocket = null
-                runCatching { activeBtClientSocket?.close() }
-                activeBtClientSocket = null
-                runCatching { wifiLock?.release() }
-            }
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    fun probeAndPairQr(
-        payload: QrPairingPayload,
-        senderDeviceName: String,
-        onResult: (connected: Boolean, transport: PeerTransport, error: String?) -> Unit
-    ) {
-        val targetName = payload.deviceName.ifBlank { payload.ip.ifBlank { "ShareMe Receiver" } }
-        val hasValidIp = payload.ip.isNotBlank() && payload.ip != "0.0.0.0"
-        val btAddress = payload.bluetoothAddress?.takeIf { it.isNotBlank() }
-
-        scope.launch {
-            _sessionState.value = TransferSessionState.Connecting(
-                peerName = targetName,
-                statusText = "Connecting to $targetName via QR..."
-            )
-            var connectedTransport: PeerTransport? = null
-            var errorMessage: String? = null
-
-            if (hasValidIp) {
-                val tcpOk = runCatching {
-                    Socket().use { socket ->
-                        socket.soTimeout = 6_000
-                        socket.tcpNoDelay = true
-                        socket.connect(InetSocketAddress(payload.ip, payload.port), 5_000)
-                        performPairHandshake(
-                            rawOutput = socket.getOutputStream(),
-                            rawInput = socket.getInputStream(),
-                            senderDeviceName = senderDeviceName,
-                            pinCode = payload.pin
-                        )
-                    }
-                }.getOrElse {
-                    errorMessage = it.localizedMessage
-                    false
-                }
-                if (tcpOk) {
-                    connectedTransport = PeerTransport.LOCAL_WIFI
-                }
-            }
-
-            if (connectedTransport == null && btAddress != null &&
-                bluetoothAdapter?.isEnabled == true &&
-                LocalNetworkUtils.hasBluetoothConnectPermission(context)
-            ) {
-                val btOk = runCatching {
-                    val device = bluetoothAdapter.getRemoteDevice(btAddress)
-                    connectBluetoothSocket(device).use { btSocket ->
-                        performPairHandshake(
-                            rawOutput = btSocket.outputStream,
-                            rawInput = btSocket.inputStream,
-                            senderDeviceName = senderDeviceName,
-                            pinCode = payload.pin
-                        )
-                    }
-                }.getOrElse {
-                    errorMessage = it.localizedMessage
-                    false
-                }
-                if (btOk) {
-                    connectedTransport = PeerTransport.BLUETOOTH
-                }
-            }
-
-            withContext(Dispatchers.Main) {
-                if (connectedTransport != null) {
-                    _sessionState.value = TransferSessionState.Idle
-                    onResult(true, connectedTransport, null)
-                } else {
-                    _sessionState.value = TransferSessionState.Error(
-                        errorMessage ?: "Unable to connect to $targetName. Check Wi-Fi or Bluetooth."
-                    )
-                    onResult(false, PeerTransport.LOCAL_WIFI, errorMessage)
-                }
-            }
-        }
-    }
-
-    private fun performPairHandshake(
-        rawOutput: OutputStream,
-        rawInput: InputStream,
-        senderDeviceName: String,
-        pinCode: String
-    ): Boolean {
-        val output = DataOutputStream(BufferedOutputStream(rawOutput))
-        val input = DataInputStream(BufferedInputStream(rawInput))
-        output.write(SHAREME_PROTOCOL_MAGIC.toByteArray(Charsets.UTF_8))
-        output.writeUTF(senderDeviceName)
-        output.writeUTF(pinCode)
-        output.writeInt(0)
-        output.writeLong(0L)
-        output.writeUTF("")
-        output.flush()
-        return input.readByte().toInt() == 1
     }
 
     @SuppressLint("MissingPermission")
@@ -731,10 +547,6 @@ class FileTransferEngine(
 
             output.writeByte(1)
             output.flush()
-
-            if (fileCount == 0) {
-                return
-            }
 
             val startTime = System.currentTimeMillis()
             var totalReceivedBytes = 0L
